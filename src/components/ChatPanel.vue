@@ -1,13 +1,13 @@
 <template>
-  <div class="flex flex-col h-screen max-w-4xl mx-auto px-4">
-    <div class="flex-1 overflow-y-auto border border-gray-300 rounded-lg p-3 mb-4 bg-white">
-      <div v-for="msg in store.messages" :key="msg.id" class="mb-4">
-        <div v-if="msg.role === 'user'" class="text-gray-700">
-          <span class="font-semibold">You:</span> {{ msg.content }}
+  <div class="chat-panel">
+    <div class="messages-area">
+      <div v-for="msg in store.messages" :key="msg.id" class="message">
+        <div v-if="msg.role === 'user'" class="user-message">
+          <span class="role">You:</span> {{ msg.content }}
         </div>
-        <div v-else class="text-gray-900">
-          <span class="font-semibold">Agent:</span> {{ msg.content }}
-          <ul v-if="msg.toolCalls?.length" class="ml-4 mt-2 space-y-1">
+        <div v-else class="agent-message">
+          <span class="role">Agent:</span> {{ msg.content }}
+          <ul v-if="msg.toolCalls?.length" class="tool-calls">
             <ToolCallCard
               v-for="toolId in msg.toolCalls.map(tc => tc.id)"
               :key="toolId"
@@ -17,19 +17,17 @@
         </div>
       </div>
     </div>
-    <form @submit.prevent="handleSubmit" class="flex gap-2">
+    <form @submit.prevent="handleSubmit" class="input-form">
       <input
         v-model="inputText"
         type="text"
         placeholder="Ask CoreCoder to do something..."
         :disabled="isLoading"
         autocomplete="off"
-        class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-500"
       />
       <button
         type="submit"
         :disabled="isLoading"
-        class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition"
       >
         Send
       </button>
@@ -61,3 +59,96 @@ async function handleSubmit() {
   }
 }
 </script>
+
+<style scoped>
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 16px;
+}
+
+.messages-area {
+  flex: 1;
+  min-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 12px;
+  background: white;
+}
+
+.message {
+  margin-bottom: 16px;
+}
+
+.user-message {
+  color: #333;
+  font-size: 14px;
+}
+
+.agent-message {
+  color: #333;
+  font-size: 14px;
+}
+
+.role {
+  font-weight: 600;
+}
+
+.tool-calls {
+  list-style: none;
+  margin: 8px 0 0 0;
+  padding: 0 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-form {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.input-form input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #d0d0d0;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+}
+
+.input-form input:focus {
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+}
+
+.input-form input:disabled {
+  background: #f5f5f5;
+  color: #999;
+  cursor: not-allowed;
+}
+
+.input-form button {
+  padding: 8px 16px;
+  background: #0066cc;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.input-form button:hover:not(:disabled) {
+  background: #0052a3;
+}
+
+.input-form button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+</style>

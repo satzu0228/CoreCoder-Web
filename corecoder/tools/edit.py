@@ -77,10 +77,14 @@ class EditFileTool(Tool):
             diff = _unified_diff(content, new_content, str(p))
 
             # In MVP web version: request user confirmation before writing
+            # Pass full old/new content so the frontend can render a proper
+            # side-by-side diff with surrounding context, not just +/- lines.
             payload = {
                 "action": "edit_file",
                 "file_path": file_path,
                 "diff": diff,
+                "old_content": content,
+                "new_content": new_content,
             }
             event_id = registry.create(payload=payload)
             # Emit to frontend with id included

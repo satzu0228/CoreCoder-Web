@@ -10,6 +10,7 @@ from ..agent import Agent
 from .routes.chat import router as chat_router
 from .routes.confirm import router as confirm_router
 from .routes.session import router as session_router
+from .routes.workspace import router as workspace_router
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _DIST_DIR = _STATIC_DIR / "dist"
@@ -49,6 +50,7 @@ def create_app(agent: Agent, token: str) -> FastAPI:
     app.include_router(chat_router)
     app.include_router(confirm_router)
     app.include_router(session_router)
+    app.include_router(workspace_router)
 
     # Serve static assets from dist/ (CSS, JS, etc.)
     # Must be mounted last so route handlers take precedence

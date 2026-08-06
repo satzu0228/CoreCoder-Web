@@ -23,6 +23,8 @@ export interface ConfirmEvent {
   command?: string
   reason?: string
   diff?: string
+  old_content?: string
+  new_content?: string
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -30,6 +32,12 @@ export const useChatStore = defineStore('chat', () => {
   const token = ref<string>('')
   const pendingConfirm = ref<ConfirmEvent | null>(null)
   const toolCalls = ref<Map<string, ToolCall>>(new Map())
+  const diffViewerOpen = ref(false)
+  const diffViewerData = ref({
+    fileName: '',
+    oldContent: '',
+    newContent: '',
+  })
 
   const addMessage = (role: 'user' | 'assistant', content: string) => {
     messages.value.push({
@@ -56,6 +64,15 @@ export const useChatStore = defineStore('chat', () => {
     pendingConfirm.value = null
   }
 
+  const openDiffViewer = (fileName: string, oldContent: string, newContent: string) => {
+    diffViewerData.value = { fileName, oldContent, newContent }
+    diffViewerOpen.value = true
+  }
+
+  const closeDiffViewer = () => {
+    diffViewerOpen.value = false
+  }
+
   const messageCount = computed(() => messages.value.length)
 
   return {
@@ -63,10 +80,14 @@ export const useChatStore = defineStore('chat', () => {
     token,
     pendingConfirm,
     toolCalls,
+    diffViewerOpen,
+    diffViewerData,
     addMessage,
     updateToolCall,
     createToolCall,
     resetMessages,
+    openDiffViewer,
+    closeDiffViewer,
     messageCount,
   }
 })
