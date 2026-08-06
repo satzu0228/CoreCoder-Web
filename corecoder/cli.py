@@ -36,6 +36,9 @@ def _parse_args():
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "web":
+        raise SystemExit(_main_web(sys.argv[2:]))
+
     args = _parse_args()
 
     if args.demo:
@@ -53,19 +56,7 @@ def main():
         config.api_key = args.api_key
 
     if not config.api_key:
-        console.print("[red bold]No API key found.[/]")
-        console.print(
-            "Set one of: OPENAI_API_KEY, DEEPSEEK_API_KEY, or CORECODER_API_KEY\n"
-            "\nExamples:\n"
-            "  # OpenAI\n"
-            "  export OPENAI_API_KEY=sk-...\n"
-            "\n"
-            "  # DeepSeek\n"
-            "  export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.deepseek.com\n"
-            "\n"
-            "  # Ollama (local)\n"
-            "  export OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1 CORECODER_MODEL=qwen2.5-coder\n"
-        )
+        _print_missing_api_key()
         sys.exit(1)
 
     llm_cls = LiteLLM if config.provider == "litellm" else LLM
@@ -99,6 +90,61 @@ def main():
 
     # interactive REPL
     _repl(agent, config)
+
+
+def _print_missing_api_key():
+    console.print("[red bold]No API key found.[/]")
+    console.print(
+        "Set one of: OPENAI_API_KEY, DEEPSEEK_API_KEY, or CORECODER_API_KEY\n"
+        "\nExamples:\n"
+        "  # OpenAI\n"
+        "  export OPENAI_API_KEY=sk-...\n"
+        "\n"
+        "  # DeepSeek\n"
+        "  export OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.deepseek.com\n"
+        "\n"
+        "  # Ollama (local)\n"
+        "  export OPENAI_API_KEY=ollama OPENAI_BASE_URL=http://localhost:11434/v1 CORECODER_MODEL=qwen2.5-coder\n"
+    )
+
+
+def _main_web(argv: list[str]) -> int:
+    """corecoder web - bind the current directory as workspace, serve over HTTP.
+
+    Deliberately doesn't accept -p/-r: one-shot mode conflicts with an
+    ongoing web conversation, and resuming a saved session into a freshly
+    started web session is a v2 concern (see docs/MVP 需求文档.md §1).
+    """
+    p = argparse.ArgumentParser(prog="corecoder web")
+    p.add_argument("-m", "--model", help="Model name (default: $CORECODER_MODEL or gpt-5.5)")
+    p.add_argument("--base-url", help="API base URL (default: $OPENAI_BASE_URL)")
+    p.add_argument("--api-key", help="API key (default: $OPENAI_API_KEY)")
+    args = p.parse_args(argv)
+
+    config = Config.from_env()
+    if args.model:
+        config.model = args.model
+    if args.base_url:
+        config.base_url = args.base_url
+    if args.api_key:
+        config.api_key = args.api_key
+
+    if not config.api_key:
+        _print_missing_api_key()
+        return 1
+
+    llm_cls = LiteLLM if config.provider == "litellm" else LLM
+    llm = llm_cls(
+        model=config.model,
+        api_key=config.api_key,
+        base_url=config.base_url,
+        temperature=config.temperature,
+        max_tokens=config.max_tokens,
+    )
+    agent = Agent(llm=llm, max_context_tokens=config.max_context_tokens)
+
+    from .web.server import run_web
+    return run_web(agent)
 
 
 def _run_once(agent: Agent, prompt: str):

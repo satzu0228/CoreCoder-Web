@@ -29,6 +29,10 @@ def test_config_defaults(monkeypatch):
     # clear relevant env vars without leaking the change into other tests
     monkeypatch.delenv("CORECODER_MODEL", raising=False)
     monkeypatch.delenv("CORECODER_MAX_TOKENS", raising=False)
+    # from_env() re-loads .env, which would put CORECODER_MODEL right back
+    # if the project root (or a parent dir) has one - e.g. a developer's own
+    # .env for manual testing against a real provider
+    monkeypatch.setattr("corecoder.config._load_dotenv", lambda: None)
 
     c = Config.from_env()
     assert c.model == "gpt-5.5"

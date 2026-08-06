@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CoreCoder Web</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+  #log { white-space: pre-wrap; border: 1px solid #ccc; border-radius: 6px; padding: 12px; min-height: 200px; margin-bottom: 12px; }
+  #log .turn { margin-bottom: 16px; }
+  #log .user { color: #555; }
+  #log .error { color: #c0392b; }
+  form { display: flex; gap: 8px; }
+  input { flex: 1; padding: 8px; font-size: 14px; }
+  button { padding: 8px 16px; }
+</style>
+</head>
+<body>
+  <h1>CoreCoder Web</h1>
+  <div id="log"></div>
+  <form id="form">
+    <input id="input" type="text" placeholder="Ask CoreCoder to do something..." autocomplete="off">
+    <button type="submit">Send</button>
+  </form>
+
+  <script>
+    const token = new URLSearchParams(location.search).get("token") || "";
+    const log = document.getElementById("log");
+    const form = document.getElementById("form");
+    const input = document.getElementById("input");
+
+    function appendTurn(className) {
+      const div = document.createElement("div");
+      div.className = "turn " + className;
+      log.appendChild(div);
+      return div;
+    }
+
+    async function sendMessage(message) {
+      appendTurn("user").textContent = "You: " + message;
+      const replyEl = appendTurn("reply");
+      replyEl.textContent = "";
+
+      const resp = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CoreCoder-Token": token,
+        },
+        body: JSON.stringify({ message }),
+      });
+
+      if (!resp.ok) {
+        replyEl.className = "turn error";
+        replyEl.textContent = "Request failed: " + resp.status;
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+
+        const frames = buf.split("\n\n");
+        buf = frames.pop(); // last chunk may be incomplete, keep it in buf
+
+        for (const frame of frames) {
+          if (!frame.startsWith("data: ")) continue;
+          const evt = JSON.parse(frame.slice(6));
+          if (evt.type === "token") {
+            replyEl.textContent += evt.text;
+          } else if (evt.type === "error") {
+            replyEl.className = "turn error";
+            replyEl.textContent += "\n[error] " + evt.message;
+          } else if (evt.type === "done") {
+            return;
+          }
+        }
+      }
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+      input.value = "";
+      input.disabled = true;
+      try {
+        await sendMessage(message);
+      } finally {
+        input.disabled = false;
+        input.focus();
+      }
+    });
+  </script>
+</body>
+</html>
