@@ -11,16 +11,21 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useChatStore } from './stores/chatStore'
+import { useAgentStream } from './composables/useAgentStream'
 import ChatPanel from './components/ChatPanel.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import './style.css'
 
 const store = useChatStore()
+const { checkPendingConfirm } = useAgentStream()
 
-onMounted(() => {
+onMounted(async () => {
   // Extract token from URL query params
   const params = new URLSearchParams(location.search)
   const token = params.get('token') || ''
   store.token = token
+
+  // Check for any pending confirmation to restore after page reload
+  await checkPendingConfirm()
 })
 </script>

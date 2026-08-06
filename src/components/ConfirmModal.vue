@@ -7,8 +7,8 @@
     :title="title"
     positive-text="Approve"
     negative-text="Reject"
-    @positive-click="approve"
-    @negative-click="reject"
+    @positive-click="handleApprove"
+    @negative-click="handleReject"
   >
     <template #default>
       <div class="space-y-3">
@@ -34,13 +34,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { NModal } from 'naive-ui'
 import { useChatStore } from '../stores/chatStore'
 import { useAgentStream } from '../composables/useAgentStream'
 
 const store = useChatStore()
 const { submitConfirm } = useAgentStream()
+const isSubmitting = ref(false)
 
 const title = computed(() => {
   if (store.pendingConfirm?.action === 'edit_file') return 'Confirm Edit'
@@ -48,11 +49,27 @@ const title = computed(() => {
   return 'Confirm Action'
 })
 
-async function approve() {
-  await submitConfirm(true)
+async function handleApprove() {
+  console.log('handleApprove clicked, pendingConfirm:', store.pendingConfirm)
+  isSubmitting.value = true
+  try {
+    await submitConfirm(true)
+  } catch (err) {
+    console.error('Approve failed:', err)
+  } finally {
+    isSubmitting.value = false
+  }
 }
 
-async function reject() {
-  await submitConfirm(false)
+async function handleReject() {
+  console.log('handleReject clicked, pendingConfirm:', store.pendingConfirm)
+  isSubmitting.value = true
+  try {
+    await submitConfirm(false)
+  } catch (err) {
+    console.error('Reject failed:', err)
+  } finally {
+    isSubmitting.value = false
+  }
 }
 </script>

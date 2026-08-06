@@ -13,6 +13,16 @@ import subprocess
 import threading
 from .base import Tool
 
+# Import confirmation helpers; only used if events._sse_emit is initialized (Web mode)
+try:
+    from ..web._confirmable import request_bash_confirmation
+    from ..web.confirm_registry import ConfirmResult
+    from ..web import events as web_events
+except ImportError:
+    request_bash_confirmation = None
+    ConfirmResult = None
+    web_events = None
+
 # Track cwd across commands (Claude Code does this too). Thread-local, so that
 # when the agent executes tools in parallel two bash calls never race on one
 # shared global: each worker thread carries its own cwd. See article 05.
@@ -61,7 +71,21 @@ class BashTool(Tool):
         # safety check
         warning = _check_dangerous(command)
         if warning:
-            return f"⚠ Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
+            # Web mode: request user confirmation; CLI mode: direct reject
+            if web_events and web_events._sse_emit is not None:
+                # Web mode: emit confirmation request and wait for user response
+                result = request_bash_confirmation(command, warning)
+
+                if result == ConfirmResult.APPROVED:
+                    # User approved; continue to execute the command below
+                    pass
+                elif result == ConfirmResult.REJECTED:
+                    return f"User explicitly rejected this command.\nCommand: {command}\nReason: {warning}\n\nPlease ask the user for clarification or suggest a safer alternative."
+                else:  # ConfirmResult.TIMEOUT
+                    return f"Command confirmation timeout (300s). User did not respond.\nCommand: {command}\nReason: {warning}"
+            else:
+                # CLI mode or events not initialized: direct reject (backward compatible)
+                return f"⚠ Blocked: {warning}\nCommand: {command}\nIf intentional, modify the command to be more specific."
 
         # use this thread's own tracked working directory
         cwd = getattr(_local, "cwd", None) or os.getcwd()

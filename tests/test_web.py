@@ -147,3 +147,98 @@ def test_chat_emits_tool_start_and_tool_end_events():
     assert tool_end_events[0]["id"] == "call_1"
     assert tool_end_events[0]["name"] == "bash"
     assert "hello" in tool_end_events[0]["result"]
+
+
+def test_confirm_endpoint_rejects_invalid_token():
+    """POST /api/confirm rejects requests without valid token."""
+    client = _make_client([LLMResponse(content="hi")])
+    resp = client.post(
+        "/api/confirm",
+        json={"id": "some-id", "approve": True},
+    )
+    assert resp.status_code == 403
+
+
+def test_confirm_endpoint_resolves_pending_confirmation():
+    """POST /api/confirm correctly resolves a pending confirmation."""
+    from corecoder.web.confirm_registry import registry
+
+    client = _make_client([LLMResponse(content="ok")])
+
+    # Create a pending confirmation
+    event_id = registry.create(payload={"action": "test", "test": "data"})
+
+    # Approve it via the endpoint
+    resp = client.post(
+        "/api/confirm",
+        json={"id": event_id, "approve": True},
+        headers={"X-CoreCoder-Token": TOKEN},
+    )
+    assert resp.status_code == 200
+
+
+def test_confirm_returns_404_for_expired_id():
+    """POST /api/confirm returns 404 for timed-out or non-existent IDs."""
+    client = _make_client([LLMResponse(content="ok")])
+
+    # Try to confirm a non-existent ID
+    resp = client.post(
+        "/api/confirm",
+        json={"id": "non-existent-id", "approve": True},
+        headers={"X-CoreCoder-Token": TOKEN},
+    )
+    assert resp.status_code == 404
+
+
+def test_get_session_pending_returns_null_when_none():
+    """GET /api/session/pending returns null when no confirmation pending."""
+    client = _make_client([LLMResponse(content="ok")])
+
+    resp = client.get(
+        "/api/session/pending",
+        params={"token": TOKEN},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pending"] is None
+
+
+def test_get_session_pending_returns_payload_when_waiting():
+    """GET /api/session/pending returns full payload of pending confirmation."""
+    from corecoder.web.confirm_registry import registry
+    import threading
+
+    client = _make_client([LLMResponse(content="ok")])
+
+    # Create a pending confirmation with payload
+    payload = {
+        "action": "bash",
+        "command": "rm -rf /",
+        "reason": "force recursive delete",
+    }
+    event_id = registry.create(payload=payload)
+
+    # Query the endpoint (in a thread to avoid blocking on wait())
+    def resolve_later():
+        import time
+        time.sleep(0.5)
+        registry.resolve(event_id, approve=False)
+
+    thread = threading.Thread(target=resolve_later, daemon=True)
+    thread.start()
+
+    resp = client.get(
+        "/api/session/pending",
+        params={"token": TOKEN},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pending"] is not None
+    assert data["pending"]["id"] == event_id
+    assert data["pending"]["action"] == "bash"
+    assert data["pending"]["command"] == "rm -rf /"
+    assert data["pending"]["reason"] == "force recursive delete"
+
+    # Clean up: wait for the resolver thread
+    thread.join(timeout=2)
+

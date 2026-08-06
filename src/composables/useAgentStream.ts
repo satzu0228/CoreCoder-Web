@@ -4,6 +4,21 @@ import type { ConfirmEvent } from '../stores/chatStore'
 export function useAgentStream() {
   const store = useChatStore()
 
+  async function checkPendingConfirm() {
+    // Query server for any pending confirmation to restore after page reload.
+    try {
+      const resp = await fetch(`/api/session/pending?token=${store.token}`)
+      if (!resp.ok) return
+
+      const data = await resp.json()
+      if (data.pending) {
+        store.pendingConfirm = data.pending as ConfirmEvent
+      }
+    } catch (err) {
+      console.error('Failed to check pending confirm:', err)
+    }
+  }
+
   async function sendMessage(message: string) {
     store.addMessage('user', message)
     // Pre-create assistant message for streaming updates
@@ -127,5 +142,6 @@ export function useAgentStream() {
   return {
     sendMessage,
     submitConfirm,
+    checkPendingConfirm,
   }
 }

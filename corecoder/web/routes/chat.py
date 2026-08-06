@@ -37,6 +37,14 @@ def _sse(data: dict) -> str:
 
 @router.post("/api/chat")
 async def chat(req: ChatRequest, request: Request):
+    # Clean up any stale pending confirmations from previous disconnected sessions
+    # (e.g., user refreshed page while waiting for confirmation)
+    from ..confirm_registry import registry as confirm_registry
+    pending = confirm_registry.get_pending()
+    if pending:
+        # Resolve any pending confirmation as TIMEOUT to unblock waiting thread
+        confirm_registry.resolve(pending["id"], approve=False)
+
     agent = request.app.state.agent
     events: queue.Queue = queue.Queue()
 

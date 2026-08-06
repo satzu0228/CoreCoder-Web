@@ -15,7 +15,7 @@ import difflib
 from pathlib import Path
 
 from .base import Tool
-from ..web.confirm_registry import registry
+from ..web.confirm_registry import registry, ConfirmResult
 from ..web import events
 
 # track files changed this session for /diff
@@ -77,23 +77,25 @@ class EditFileTool(Tool):
             diff = _unified_diff(content, new_content, str(p))
 
             # In MVP web version: request user confirmation before writing
-            event_id = registry.create()
-            events.emit("confirm_required", {
-                "id": event_id,
+            payload = {
                 "action": "edit_file",
                 "file_path": file_path,
                 "diff": diff,
-            })
-            approved = registry.wait(event_id, timeout=300)
+            }
+            event_id = registry.create(payload=payload)
+            # Emit to frontend with id included
+            events.emit("confirm_required", {"id": event_id, **payload})
+            result = registry.wait(event_id, timeout=300)
 
-            if not approved:
-                return f"Edit rejected by user.\n{diff}"
-
-            # User approved; write the file
-            p.write_text(new_content, encoding="utf-8")
-            _changed_files.add(str(p))
-
-            return f"Edited {file_path}\n{diff}"
+            if result == ConfirmResult.APPROVED:
+                # User approved; write the file
+                p.write_text(new_content, encoding="utf-8")
+                _changed_files.add(str(p))
+                return f"Edited {file_path}\n{diff}"
+            elif result == ConfirmResult.REJECTED:
+                return f"User explicitly rejected this edit.\nFile: {file_path}\nPlease review the proposed changes or ask the user for approval.\n{diff}"
+            else:  # ConfirmResult.TIMEOUT
+                return f"Edit confirmation timeout (300s). User did not respond.\nFile: {file_path}\n{diff}"
         except Exception as e:
             return f"Error: {e}"
 
