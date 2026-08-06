@@ -17,6 +17,7 @@ from .tools.base import Tool
 from .tools.agent import AgentTool
 from .prompt import system_prompt
 from .context import ContextManager
+from .web import events
 
 
 class Agent:
@@ -71,15 +72,18 @@ class Agent:
                 if len(resp.tool_calls) == 1:
                     tc = resp.tool_calls[0]
                     if on_tool:
-                        on_tool(tc.name, tc.arguments)
+                        on_tool(tc.id, tc.name, tc.arguments)
                     result = self._exec_tool(tc)
+                    events.emit("tool_end", {"id": tc.id, "name": tc.name, "result": result})
                     self.messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": result,
                     })
                 else:
-                    # parallel execution for multiple tool calls
+                    # parallel execution for multiple tool calls; results are
+                    # emitted individually as each future completes (see
+                    # _exec_tools_parallel), so no extra emit loop here
                     results = self._exec_tools_parallel(resp.tool_calls, on_tool)
                     for tc, result in zip(resp.tool_calls, results):
                         self.messages.append({
@@ -120,14 +124,25 @@ class Agent:
         This is inspired by Claude Code's StreamingToolExecutor which starts
         executing tools while the model is still generating.  We simplify to:
         when the model returns N tool calls at once, run them in parallel.
+
+        tool_end is emitted per-future as each one completes (as_completed),
+        not after all futures finish, so the frontend sees results in real time.
         """
         for tc in tool_calls:
             if on_tool:
-                on_tool(tc.name, tc.arguments)
+                on_tool(tc.id, tc.name, tc.arguments)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-            futures = [pool.submit(self._exec_tool, tc) for tc in tool_calls]
-            return [f.result() for f in futures]
+            future_to_tc = {pool.submit(self._exec_tool, tc): tc for tc in tool_calls}
+            results: dict[str, str] = {}
+            for fut in concurrent.futures.as_completed(future_to_tc):
+                tc = future_to_tc[fut]
+                result = fut.result()
+                results[tc.id] = result
+                events.emit("tool_end", {"id": tc.id, "name": tc.name, "result": result})
+
+        # preserve original ordering so the caller can zip(tool_calls, results)
+        return [results[tc.id] for tc in tool_calls]
 
     def _answer_pending_tool_calls(self, tool_calls):
         """Backfill a tool reply for every call that didn't get one.

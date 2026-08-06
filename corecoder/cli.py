@@ -152,7 +152,7 @@ def _run_once(agent: Agent, prompt: str):
     def on_token(tok):
         print(tok, end="", flush=True)
 
-    def on_tool(name, kwargs):
+    def on_tool(tool_id, name, kwargs):
         console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
 
     try:
@@ -279,7 +279,7 @@ def _repl(agent: Agent, config: Config):
             streamed.append(tok)
             print(tok, end="", flush=True)
 
-        def on_tool(name, kwargs):
+        def on_tool(tool_id, name, kwargs):
             console.print(f"\n[dim]> {name}({_brief(kwargs)})[/dim]")
 
         try:

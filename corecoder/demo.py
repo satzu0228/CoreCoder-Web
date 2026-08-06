@@ -77,7 +77,7 @@ def run_demo() -> int:
     console.print(Panel.fit(f"[bold]{_TASK}[/]", title="corecoder demo (offline)"))
     result = agent.chat(
         _TASK,
-        on_tool=lambda name, args: console.print(f"[cyan]tool:[/] {name} {_summarize(args)}"),
+        on_tool=lambda tool_id, name, args: console.print(f"[cyan]tool:[/] {name} {_summarize(args)}"),
     )
     console.print(Panel.fit(Markdown(result), title="final"))
     console.print(f"[dim]workspace kept at {workdir}[/]")
