@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Naive UI theme override */
+@import '@naiveui/fonts/index.css';
+
+:root {
+  --n-color: #ffffff;
+  --n-color-target: #f5f5f5;
+  --n-text-color: #333333;
+  --n-border-color: #e0e0e0;
+}
+
+* {
+  @apply box-border;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900;
+}
+
+code {
+  @apply bg-gray-100 px-1.5 py-0.5 rounded text-sm;
+}
+
+pre {
+  @apply bg-gray-100 p-3 rounded text-sm overflow-auto;
+}

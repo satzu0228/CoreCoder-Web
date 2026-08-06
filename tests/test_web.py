@@ -98,3 +98,52 @@ def test_chat_accepts_token_as_query_param_too():
         json={"message": "hello"},
     )
     assert resp.status_code == 200
+
+
+def test_chat_emits_tool_start_and_tool_end_events():
+    """Verify tool_start and tool_end events are emitted in the SSE stream."""
+    from corecoder.llm import ToolCall
+
+    # Create a response with a single tool call
+    tool_calls = [
+        ToolCall(
+            id="call_1",
+            name="bash",
+            arguments={"command": "echo hello"},
+        )
+    ]
+    # After tool execution, LLM returns final text
+    turns = [
+        LLMResponse(content="", tool_calls=tool_calls),
+        LLMResponse(content="done"),
+    ]
+
+    from corecoder.tools import get_tool
+    bash_tool = get_tool("bash")
+    agent = Agent(llm=ScriptedLLM(turns), tools=[bash_tool])
+    app = create_app(agent, TOKEN)
+    client = TestClient(app)
+
+    resp = client.post(
+        "/api/chat",
+        json={"message": "run echo"},
+        headers={"X-CoreCoder-Token": TOKEN},
+    )
+    assert resp.status_code == 200
+
+    events = _parse_sse(resp.text)
+    assert events[-1] == {"type": "done"}
+
+    # Verify tool_start event
+    tool_start_events = [e for e in events if e["type"] == "tool_start"]
+    assert len(tool_start_events) == 1
+    assert tool_start_events[0]["id"] == "call_1"
+    assert tool_start_events[0]["name"] == "bash"
+    assert tool_start_events[0]["args"]["command"] == "echo hello"
+
+    # Verify tool_end event
+    tool_end_events = [e for e in events if e["type"] == "tool_end"]
+    assert len(tool_end_events) == 1
+    assert tool_end_events[0]["id"] == "call_1"
+    assert tool_end_events[0]["name"] == "bash"
+    assert "hello" in tool_end_events[0]["result"]
