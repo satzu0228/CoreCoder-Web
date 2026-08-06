@@ -4,16 +4,18 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from ..agent import Agent
 from .routes.chat import router as chat_router
 from .routes.confirm import router as confirm_router
 
 _STATIC_DIR = Path(__file__).parent / "static"
+_DIST_DIR = _STATIC_DIR / "dist"
 
 # paths that don't require the auth token (the SPA shell itself has to load
 # before it can read the token out of its own URL)
-_PUBLIC_PATHS = {"/"}
+_PUBLIC_PATHS = {"/", "/index.html"}
 
 
 def create_app(agent: Agent, token: str) -> FastAPI:
@@ -23,16 +25,32 @@ def create_app(agent: Agent, token: str) -> FastAPI:
 
     @app.middleware("http")
     async def check_token(request: Request, call_next):
-        if request.url.path not in _PUBLIC_PATHS:
+        # API routes need token; static files and public paths don't
+        path = request.url.path
+
+        # Whitelist static file extensions (Vue build output)
+        static_extensions = ('.js', '.css', '.svg', '.woff', '.woff2', '.ttf', '.eot', '.map', '.json')
+        if any(path.endswith(ext) for ext in static_extensions):
+            return await call_next(request)
+
+        # API routes need token
+        if path.startswith("/api/"):
             supplied = request.headers.get("x-corecoder-token") or request.query_params.get("token")
             if supplied != request.app.state.token:
                 return JSONResponse({"error": "invalid or missing token"}, status_code=403)
+
         return await call_next(request)
 
     @app.get("/")
     async def index():
-        return FileResponse(_STATIC_DIR / "index.html")
+        return FileResponse(_DIST_DIR / "index.html")
 
     app.include_router(chat_router)
     app.include_router(confirm_router)
+
+    # Serve static assets from dist/ (CSS, JS, etc.)
+    # Must be mounted last so route handlers take precedence
+    if _DIST_DIR.exists():
+        app.mount("/", StaticFiles(directory=_DIST_DIR, html=True), name="static")
+
     return app
