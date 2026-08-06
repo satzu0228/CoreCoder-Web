@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from ..agent import Agent
 from .routes.chat import router as chat_router
+from .routes.confirm import router as confirm_router
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -33,4 +34,5 @@ def create_app(agent: Agent, token: str) -> FastAPI:
         return FileResponse(_STATIC_DIR / "index.html")
 
     app.include_router(chat_router)
+    app.include_router(confirm_router)
     return app

@@ -4,12 +4,19 @@ The core idea: instead of sending whole-file rewrites or line-number patches,
 the LLM specifies an *exact* substring to find and its replacement. The
 substring must appear exactly once in the file, which eliminates ambiguity
 and makes edits safe and reviewable.
+
+MVP: In the web version, before writing, diff is computed and sent to the
+frontend for user confirmation. If the user rejects, no file modification
+happens. The tool returns early with "rejected by user" semantics distinct
+from execution errors, so the LLM can understand the difference.
 """
 
 import difflib
 from pathlib import Path
 
 from .base import Tool
+from ..web.confirm_registry import registry
+from ..web import events
 
 # track files changed this session for /diff
 _changed_files: set[str] = set()
@@ -66,11 +73,26 @@ class EditFileTool(Tool):
                 )
 
             new_content = content.replace(old_string, new_string, 1)
+            # Compute diff BEFORE any write, so it's available even if write fails
+            diff = _unified_diff(content, new_content, str(p))
+
+            # In MVP web version: request user confirmation before writing
+            event_id = registry.create()
+            events.emit("confirm_required", {
+                "id": event_id,
+                "action": "edit_file",
+                "file_path": file_path,
+                "diff": diff,
+            })
+            approved = registry.wait(event_id, timeout=300)
+
+            if not approved:
+                return f"Edit rejected by user.\n{diff}"
+
+            # User approved; write the file
             p.write_text(new_content, encoding="utf-8")
             _changed_files.add(str(p))
 
-            # generate a unified diff so the user/LLM can see exactly what changed
-            diff = _unified_diff(content, new_content, str(p))
             return f"Edited {file_path}\n{diff}"
         except Exception as e:
             return f"Error: {e}"

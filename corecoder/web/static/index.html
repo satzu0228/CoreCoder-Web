@@ -41,6 +41,22 @@
   form { display: flex; gap: 8px; }
   input { flex: 1; padding: 8px; font-size: 14px; }
   button { padding: 8px 16px; }
+
+  /* ── confirm modal ── */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+                   z-index: 1000; align-items: center; justify-content: center; }
+  .modal-overlay.visible { display: flex; }
+  .modal { background: #fff; border-radius: 8px; padding: 24px; max-width: 600px;
+           max-height: 80vh; overflow-y: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
+  .modal h2 { margin-top: 0; font-size: 18px; }
+  .modal-diff { background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px;
+                padding: 12px; margin: 12px 0; font-family: monospace; font-size: 12px;
+                white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
+  .modal-buttons { display: flex; gap: 12px; margin-top: 16px; justify-content: flex-end; }
+  .modal-buttons button { padding: 8px 16px; border: 1px solid #ccc; border-radius: 4px;
+                          cursor: pointer; background: #fff; }
+  .modal-buttons .btn-approve { background: #4caf50; color: #fff; border-color: #4caf50; }
+  .modal-buttons .btn-reject { background: #f44336; color: #fff; border-color: #f44336; }
 </style>
 </head>
 <body>
@@ -50,6 +66,17 @@
     <input id="input" type="text" placeholder="Ask CoreCoder to do something..." autocomplete="off">
     <button type="submit">Send</button>
   </form>
+
+  <div id="confirmModal" class="modal-overlay">
+    <div class="modal">
+      <h2 id="confirmTitle">Confirm Action</h2>
+      <div id="confirmContent"></div>
+      <div class="modal-buttons">
+        <button class="btn-reject" id="btnReject">Reject</button>
+        <button class="btn-approve" id="btnApprove">Approve</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     const token = new URLSearchParams(location.search).get("token") || "";
@@ -66,7 +93,6 @@
       return div;
     }
 
-    // Create a timeline <ul> inside the current reply turn element.
     function makeTimeline(container) {
       const ul = document.createElement("ul");
       ul.className = "timeline";
@@ -74,7 +100,6 @@
       return ul;
     }
 
-    // Add a "running" tool card to the timeline and return it.
     function addToolCard(timeline, toolId, name, args) {
       const li = document.createElement("li");
       li.className = "tool-card running";
@@ -95,7 +120,6 @@
       return li;
     }
 
-    // Mark a card as done and attach the (collapsible) result.
     function finishToolCard(card, result) {
       card.classList.replace("running", "done");
       const badge = card.querySelector(".tool-status");
@@ -107,7 +131,6 @@
       resultEl.textContent = result;
       card.appendChild(resultEl);
 
-      // only show the toggle when result is non-trivial
       if (result && result !== "(no output)") {
         const toggle = document.createElement("button");
         toggle.className = "toggle-result";
@@ -126,6 +149,72 @@
         .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
 
+    // ── Confirm Modal ────────────────────────────────────────────────────────
+
+    let pendingConfirmId = null;
+
+    function showConfirmModal(evt) {
+      pendingConfirmId = evt.id;
+      const modal = document.getElementById("confirmModal");
+      const title = document.getElementById("confirmTitle");
+      const content = document.getElementById("confirmContent");
+
+      title.textContent = evt.action === "edit_file" ? "Confirm Edit" : "Confirm Command";
+
+      content.innerHTML = "";
+      if (evt.action === "edit_file") {
+        const fileEl = document.createElement("div");
+        fileEl.innerHTML = `<strong>File:</strong> <code>${escHtml(evt.file_path)}</code>`;
+        content.appendChild(fileEl);
+      }
+      if (evt.action === "bash") {
+        const cmdEl = document.createElement("div");
+        cmdEl.innerHTML = `<strong>Command:</strong> <code>${escHtml(evt.command)}</code>`;
+        content.appendChild(cmdEl);
+      }
+      if (evt.diff) {
+        const diffLabel = document.createElement("div");
+        diffLabel.style.marginTop = "12px";
+        diffLabel.innerHTML = "<strong>Changes:</strong>";
+        content.appendChild(diffLabel);
+
+        const diffEl = document.createElement("div");
+        diffEl.className = "modal-diff";
+        diffEl.textContent = evt.diff;
+        content.appendChild(diffEl);
+      }
+
+      modal.classList.add("visible");
+    }
+
+    function hideConfirmModal() {
+      const modal = document.getElementById("confirmModal");
+      modal.classList.remove("visible");
+      pendingConfirmId = null;
+    }
+
+    async function submitConfirm(approve) {
+      if (!pendingConfirmId) return;
+
+      const resp = await fetch("/api/confirm", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CoreCoder-Token": token,
+        },
+        body: JSON.stringify({ id: pendingConfirmId, approve }),
+      });
+
+      hideConfirmModal();
+
+      if (!resp.ok) {
+        console.error("Confirm request failed:", resp.status, await resp.text());
+      }
+    }
+
+    document.getElementById("btnApprove").addEventListener("click", () => submitConfirm(true));
+    document.getElementById("btnReject").addEventListener("click", () => submitConfirm(false));
+
     // ── SSE streaming ────────────────────────────────────────────────────────
 
     async function sendMessage(message) {
@@ -133,10 +222,7 @@
       const replyEl   = appendTurn("reply");
       replyEl.textContent = "";
 
-      // Timeline is appended as a child of the reply turn; it is created on
-      // the first tool_start event so pure-text replies don't show an empty ul.
       let timeline = null;
-      // Map tool_id -> card element so tool_end can find the right card.
       const cards = {};
 
       const resp = await fetch("/api/chat", {
@@ -164,7 +250,7 @@
         buf += decoder.decode(value, { stream: true });
 
         const frames = buf.split("\n\n");
-        buf = frames.pop(); // last chunk may be incomplete
+        buf = frames.pop();
 
         for (const frame of frames) {
           if (!frame.startsWith("data: ")) continue;
@@ -180,6 +266,9 @@
           } else if (evt.type === "tool_end") {
             const card = cards[evt.id];
             if (card) finishToolCard(card, evt.result || "");
+
+          } else if (evt.type === "confirm_required") {
+            showConfirmModal(evt);
 
           } else if (evt.type === "error") {
             replyEl.className = "turn error";
