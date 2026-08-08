@@ -70,7 +70,9 @@ def _set_current_process(proc: subprocess.Popen | None) -> None:
 
 
 # patterns that could wreck the filesystem or leak secrets
+# grouped by platform: POSIX, PowerShell, CMD
 _DANGEROUS_PATTERNS = [
+    # --- POSIX / Linux ---
     # recursive delete aimed at root/home (force flag optional)
     (r"\brm\s+(-\w*)?-r\w*\s+(/|~|\$HOME)", "recursive delete on home/root"),
     # recursive (-r/-R) and force (-f) flags together, in any order or spacing
@@ -84,6 +86,31 @@ _DANGEROUS_PATTERNS = [
     (r":\(\)\s*\{.*:\|:.*\}", "fork bomb"),
     (r"\bcurl\b.*\|\s*(sudo\s+)?(ba)?sh\b", "pipe curl to shell"),
     (r"\bwget\b.*\|\s*(sudo\s+)?(ba)?sh\b", "pipe wget to shell"),
+    # additional destructive tools
+    (r"\bshred\b.*/dev/", "shred block device"),
+    (r"\bcryptsetup\b.*erase", "erase LUKS headers"),
+    # --- PowerShell ---
+    (r"remove-item\s+.*-recurse\s+.*-force", "PowerShell force recursive delete"),
+    (r"\bri\s+-r\s+-fo\b", "PowerShell force recursive delete (alias)"),
+    (r"\brm\s+-r\s+-fo\b", "PowerShell force delete (alias)"),
+    (r"\bformat-volume\b", "PowerShell format volume"),
+    (r"\bclear-disk\b", "PowerShell clear disk"),
+    (r"\bclear-recyclebin\b", "PowerShell clear recycle bin"),
+    (r"\binvoke-expression\b", "PowerShell invoke expression (eval)"),
+    (r"\biex\b", "PowerShell iex (eval alias)"),
+    (r"invoke-(webrequest|restmethod)\b.*\|\s*iex", "PowerShell download and execute"),
+    (r"(iwr|wget|curl)\b.*\|\s*iex", "PowerShell download and execute (short)"),
+    (r"set-executionpolicy\b.*unrestricted", "PowerShell downgrade execution policy"),
+    (r"remove-itemproperty\b.*hklm", "PowerShell registry deletion"),
+    # --- CMD ---
+    (r"\bdel\s+/[sfq][sfq]*\s+", "CMD force recursive delete"),
+    (r"\berase\s+/[sfq][sfq]*\s+", "CMD force delete (erase)"),
+    (r"\brmdir\s+/s\s+/q", "CMD force recursive directory delete"),
+    (r"\bformat\s+[a-z]:", "CMD format drive"),
+    (r"\bdiskpart\b", "CMD disk partition tool"),
+    (r"\breg\s+delete\b", "CMD registry delete"),
+    (r"\breg\s+add\b.*hklm", "CMD registry modification"),
+    (r"\bicacls\b.*/grant.*everyone.*[fF]", "CMD grant everyone full control"),
 ]
 
 
@@ -189,9 +216,15 @@ class BashTool(Tool):
 
 
 def _check_dangerous(cmd: str) -> str | None:
-    """Return a warning string if the command looks destructive, else None."""
+    """Return a warning string if the command looks destructive, else None.
+
+    Normalizes whitespace before matching, and uses case-insensitive search
+    so that ``RM -RF /`` and ``Remove-Item …`` are caught equally.
+    This is a risk hint — it is NOT a complete shell sandbox.
+    """
+    normalized = " ".join(cmd.split())
     for pattern, reason in _DANGEROUS_PATTERNS:
-        if re.search(pattern, cmd):
+        if re.search(pattern, normalized, re.IGNORECASE):
             return reason
     return None
 

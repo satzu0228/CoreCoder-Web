@@ -1,7 +1,11 @@
 <template>
   <div id="app" class="w-full h-dvh flex overflow-hidden bg-brand-50">
-    <SessionSidebar />
-    <ChatPanel />
+    <ErrorBoundary fallback-text="侧边栏出错">
+      <SessionSidebar />
+    </ErrorBoundary>
+    <ErrorBoundary fallback-text="聊天面板出错">
+      <ChatPanel />
+    </ErrorBoundary>
     <div v-if="booting" class="fixed inset-0 z-[100] grid place-content-center justify-items-center bg-brand-50 text-brand-500 text-xs">
       <span class="w-[42px] h-[42px] grid place-items-center rounded-xl bg-brand-950 text-white font-bold text-[15px] font-mono">C</span>
       <p>正在打开工作空间…</p>
@@ -17,6 +21,7 @@ import ChatPanel from './components/ChatPanel.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import DiffViewerModal from './components/DiffViewerModal.vue'
 import SessionSidebar from './components/SessionSidebar.vue'
+import ErrorBoundary from './components/ErrorBoundary.vue'
 import { useAgentStream } from './composables/useAgentStream'
 import { useChatStore } from './stores/chatStore'
 import './style.css'

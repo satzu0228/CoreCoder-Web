@@ -13,6 +13,17 @@ function errorText(payload: unknown, fallback: string): string {
   return fallback
 }
 
+/** Parse a raw SSE frame string. Returns the parsed JSON object or null. */
+export function parseSSEFrame(frame: string): object | null {
+  const trimmed = frame.trim()
+  if (!trimmed.startsWith('data: ')) return null
+  try {
+    return JSON.parse(trimmed.slice(6))
+  } catch {
+    return null
+  }
+}
+
 export function useAgentStream() {
   const store = useChatStore()
   let lastSequence = 0
@@ -222,7 +233,13 @@ export function useAgentStream() {
       }
       assistant.content += characterQueue[queueIndex]
       queueIndex += 1
-      typingTimer = window.setTimeout(typeNextCharacter, 11)
+      // 积压超过 20 个字符时批量出字，减少 DOM 更新频率
+      if (characterQueue.length - queueIndex > 20) {
+        const batch = characterQueue.slice(queueIndex, queueIndex + 3)
+        assistant.content += batch.join('')
+        queueIndex = Math.min(queueIndex + 3, characterQueue.length)
+      }
+      typingTimer = window.setTimeout(typeNextCharacter, 30)
     }
 
     function enqueueText(text: string) {
@@ -257,8 +274,8 @@ export function useAgentStream() {
         buffer = frames.pop() || ''
         for (const frame of frames) {
           if (!frame.startsWith('data: ')) continue
-          const event = JSON.parse(frame.slice(6))
-          if (event.session_id && event.session_id !== sessionId) continue
+        const event = JSON.parse(frame.slice(6))
+        if (event.session_id && event.session_id !== sessionId) continue
           if (cancelledLocally) {
             if (event.type === 'done') streamCompleted = true
             continue
@@ -364,8 +381,8 @@ export function useAgentStream() {
         buffer = frames.pop() || ''
         for (const frame of frames) {
           if (!frame.startsWith('data: ')) continue
-          const event = JSON.parse(frame.slice(6))
-          if (event.session_id && event.session_id !== sessionId) continue
+        const event = JSON.parse(frame.slice(6))
+        if (event.session_id && event.session_id !== sessionId) continue
           if (typeof event.sequence === 'number' && event.sequence > lastSequence) {
             lastSequence = event.sequence
           }

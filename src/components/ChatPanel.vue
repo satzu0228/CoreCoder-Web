@@ -14,7 +14,7 @@
       <div class="ml-auto px-2 py-[5px] border border-brand-200 rounded-md bg-brand-50 text-brand-600 font-medium text-[10px] font-mono max-md:hidden">{{ store.activeSession?.model || 'CoreCoder' }}</div>
     </header>
 
-    <div ref="scrollArea" class="min-h-0 flex-1 overflow-y-auto smooth-scroll">
+    <div ref="scrollArea" class="min-h-0 flex-1 overflow-y-auto smooth-scroll" @scroll="onScroll">
       <!-- 空状态 -->
       <div v-if="!store.messages.length" class="w-[min(660px,calc(100%-40px))] min-h-full flex flex-col justify-center items-center mx-auto py-12 pb-[120px] text-center max-md:w-[calc(100%-32px)] max-md:pb-20">
         <div class="w-[58px] h-[58px] grid place-items-center mb-[22px] border border-brand-200 rounded-[17px] bg-white text-primary-500 shadow-[0_10px_30px_rgba(30,43,59,.07)] -rotate-3">
@@ -74,6 +74,15 @@
           </div>
         </article>
       </div>
+      <button
+        v-show="showScrollButton"
+        class="fixed bottom-[130px] right-8 z-30 w-9 h-9 grid place-items-center rounded-full bg-white border border-brand-200 shadow-lg text-brand-500 cursor-pointer hover:text-brand-800 hover:border-brand-300 transition-all max-md:bottom-[100px] max-md:right-4"
+        aria-label="回到底部"
+        title="回到底部"
+        @click="scrollToBottom"
+      >
+        <svg class="w-4 h-4 fill-none stroke-current" style="stroke-linecap:round;stroke-linejoin:round;stroke-width:2" viewBox="0 0 20 20"><path d="m6 8 4 4 4-4"/></svg>
+      </button>
     </div>
 
     <!-- 输入区 -->
@@ -130,6 +139,36 @@ const scrollArea = ref<HTMLElement | null>(null)
 const traceCollapsed = reactive<Record<string, boolean>>({})
 function toggleTrace(msgId: string) { traceCollapsed[msgId] = !traceCollapsed[msgId] }
 
+// === 智能滚动 ===
+const autoScroll = ref(true)
+const showScrollButton = ref(false)
+const scrollPositions = reactive<Record<string, number>>({})
+const NEAR_BOTTOM = 80
+const BUTTON_SHOW_DISTANCE = 200
+
+function onScroll() {
+  if (!scrollArea.value) return
+  const el = scrollArea.value
+  const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+  autoScroll.value = distanceFromBottom < NEAR_BOTTOM
+  showScrollButton.value = !autoScroll.value && distanceFromBottom > BUTTON_SHOW_DISTANCE
+}
+
+function scrollToBottom() {
+  if (!scrollArea.value) return
+  scrollArea.value.scrollTop = scrollArea.value.scrollHeight
+  autoScroll.value = true
+  showScrollButton.value = false
+}
+
+watch(() => store.activeSessionId, (newId, oldId) => {
+  if (oldId && scrollArea.value && store.activeSessionId !== oldId) {
+    scrollPositions[oldId] = scrollArea.value.scrollTop
+  }
+  autoScroll.value = true
+  showScrollButton.value = false
+})
+
 const inputDisabled = computed(() => store.isRunning)
 const composerPlaceholder = computed(() => {
   if (store.runningSessionId && store.runningSessionId !== store.activeSessionId) return '另一个对话正在执行，请等待它完成…'
@@ -161,13 +200,22 @@ async function handleSubmit() {
   inputText.value = ''
   await nextTick()
   resizeTextarea()
+  autoScroll.value = true
+  showScrollButton.value = false
   await sendMessage(text)
 }
 
-watch(() => store.messages.map(message => `${message.content.length}:${message.toolCalls?.length || 0}`).join(','), async () => {
-  await nextTick()
-  if (scrollArea.value) scrollArea.value.scrollTop = scrollArea.value.scrollHeight
-})
+// 内容变化时，仅在用户位于底部才自动跟随
+watch(
+  () => store.messages,
+  async () => {
+    await nextTick()
+    if (autoScroll.value && scrollArea.value) {
+      scrollArea.value.scrollTop = scrollArea.value.scrollHeight
+    }
+  },
+  { deep: true },
+)
 </script>
 
 <style scoped>

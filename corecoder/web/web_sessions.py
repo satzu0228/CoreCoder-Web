@@ -17,6 +17,12 @@ from ..tools.agent import AgentTool
 
 WEB_SESSIONS_DIR = Path.home() / ".corecoder" / "web-sessions"
 _VALID_SESSION_ID = set("0123456789abcdef")
+_INDEX_FILE = "_index.json"
+_INDEX_VERSION = 1
+
+# Governance defaults (overridable via __init__ kwargs)
+_MAX_MESSAGES_PER_SESSION = 500
+_MAX_SESSIONS = 1000
 
 
 def _now() -> str:
@@ -125,9 +131,138 @@ class WebSessionManager:
             raise RuntimeError("session persistence is disabled")
         return self.session_dir / f"{session_id}.json"
 
+    # ── index (lightweight metadata cache) ────────────────────────
+
+    def _index_path(self) -> Path | None:
+        if self.session_dir is None:
+            return None
+        return self.session_dir / _INDEX_FILE
+
+    def _load_index(self) -> dict[str, dict] | None:
+        """Read the lightweight metadata index. Returns None if missing/corrupt."""
+        ipath = self._index_path()
+        if ipath is None or not ipath.exists():
+            return None
+        try:
+            data = json.loads(ipath.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("version") != _INDEX_VERSION:
+                return None
+            entries = data.get("entries")
+            if not isinstance(entries, dict):
+                return None
+            return entries
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            return None
+
+    def _build_index(self) -> dict[str, dict]:
+        """Scan all session JSON files and rebuild the index."""
+        entries: dict[str, dict] = {}
+        if self.session_dir is None or not self.session_dir.exists():
+            return entries
+        for path in self.session_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                sid = str(data.get("id", ""))
+                if len(sid) != 32 or data.get("workspace_id") != self.workspace_id:
+                    continue
+                preview = ""
+                for m in (data.get("messages") or []):
+                    if m.get("role") == "user" and m.get("content"):
+                        preview = " ".join(str(m["content"]).split())[:88]
+                        break
+                entries[sid] = {
+                    "id": sid,
+                    "title": str(data.get("title") or _title_from_messages(data.get("messages") or [])),
+                    "preview": preview,
+                    "model": str(data.get("model") or "unknown"),
+                    "status": str(data.get("status", "idle")),
+                    "created_at": str(data.get("created_at") or _now()),
+                    "updated_at": str(data.get("updated_at") or _now()),
+                }
+            except (OSError, json.JSONDecodeError, TypeError, ValueError, KeyError):
+                continue
+        return entries
+
+    def _write_index(self, entries: dict[str, dict]) -> None:
+        """Atomically write the index file."""
+        ipath = self._index_path()
+        if ipath is None:
+            return
+        tmp = ipath.with_suffix(".json.tmp")
+        payload = {"version": _INDEX_VERSION, "entries": entries}
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, ipath)
+
+    def _update_index_entry(self, session: WebSession) -> None:
+        """Update one session's entry in the index and persist."""
+        ipath = self._index_path()
+        if ipath is None:
+            return
+        entries = self._load_index() or self._build_index()
+        preview = ""
+        for m in session.agent.messages:
+            if m.get("role") == "user" and m.get("content"):
+                preview = " ".join(str(m["content"]).split())[:88]
+                break
+        entries[session.id] = {
+            "id": session.id,
+            "title": session.title,
+            "preview": preview,
+            "model": session.model,
+            "status": session.status,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+        }
+        self._write_index(entries)
+
+    def _remove_index_entry(self, session_id: str) -> None:
+        """Remove a session from the index."""
+        ipath = self._index_path()
+        if ipath is None:
+            return
+        entries = self._load_index()
+        if entries is None:
+            return
+        if entries.pop(session_id, None) is not None:
+            self._write_index(entries)
+
+    # ── load / persist ───────────────────────────────────────────
+
     def _load(self) -> None:
         if self.session_dir is None or not self.session_dir.exists():
             return
+        # Fast path: load from index, defer full message loading
+        index_entries = self._load_index()
+        if index_entries is not None:
+            for sid, entry in index_entries.items():
+                if entry.get("status") in ("running", "waiting_confirmation"):
+                    entry["status"] = "interrupted"
+                try:
+                    path = self._path(sid)
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError, KeyError):
+                    continue
+                messages = data.get("messages", [])
+                if not isinstance(messages, list):
+                    continue
+                agent = self._new_agent()
+                agent.messages = messages
+                self._sessions[sid] = WebSession(
+                    id=sid,
+                    workspace_id=self.workspace_id,
+                    title=str(entry.get("title") or _title_from_messages(messages)),
+                    model=str(entry.get("model") or getattr(agent.llm, "model", "unknown")),
+                    created_at=str(entry.get("created_at") or _now()),
+                    updated_at=str(entry.get("updated_at") or _now()),
+                    status=str(entry.get("status", "idle")),
+                    agent=agent,
+                )
+            return
+        # Slow path (no index): scan all files as before
         for path in self.session_dir.glob("*.json"):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -158,10 +293,28 @@ class WebSessionManager:
             except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
                 # One broken conversation must not hide the rest of the list.
                 continue
+        # Rebuild index for next startup
+        if self._sessions:
+            entries = self._build_index()
+            self._write_index(entries)
 
     def _persist(self, session: WebSession) -> None:
         if self.session_dir is None:
             return
+        # --- message count governance ---
+        messages = session.agent.messages
+        if len(messages) > _MAX_MESSAGES_PER_SESSION:
+            # Keep first user message as anchor + most recent messages
+            first_user = None
+            for m in messages:
+                if m.get("role") == "user":
+                    first_user = m
+                    break
+            tail = messages[-(_MAX_MESSAGES_PER_SESSION - 2):]
+            marker = {"role": "system", "content": "[历史消息已截断，保留最近 {} 条]".format(_MAX_MESSAGES_PER_SESSION)}
+            messages = ([first_user, marker] + tail) if first_user else ([marker] + tail)
+            session.agent.messages = messages
+        # --- write ---
         self.session_dir.mkdir(parents=True, exist_ok=True)
         path = self._path(session.id)
         temporary = path.with_suffix(".json.tmp")
@@ -174,10 +327,18 @@ class WebSessionManager:
             "created_at": session.created_at,
             "updated_at": session.updated_at,
             "status": session.status,
-            "messages": session.agent.messages,
+            "messages": messages,
         }
-        temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        json_text = json.dumps(data, ensure_ascii=False, indent=2)
+        temporary.write_text(json_text, encoding="utf-8")
+        # Unix permission hardening (no-op on Windows)
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
         os.replace(temporary, path)
+        # --- index ---
+        self._update_index_entry(session)
 
     def list(self) -> list[dict]:
         with self._lock:
@@ -225,6 +386,7 @@ class WebSessionManager:
                 path = self._path(session.id)
                 if path.exists():
                     path.unlink()
+                self._remove_index_entry(session_id)
 
     def begin_run(self, session_id: str) -> WebSession:
         with self._lock:
