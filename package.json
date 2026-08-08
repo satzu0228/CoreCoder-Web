@@ -1,6 +1,9 @@
 {
   "name": "corecoder-web",
-  "version": "0.1.0",
+  "version": "0.4.0",
+  "description": "Vue frontend for the local-first CoreCoder-Web coding agent",
+  "license": "MIT",
+  "repository": "https://github.com/satzu0228/CoreCoder-Web",
   "type": "module",
   "scripts": {
     "dev": "vite",

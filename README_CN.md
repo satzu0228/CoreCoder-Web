@@ -1,87 +1,156 @@
 # CoreCoder-Web
 
-基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) 极简 agent runtime 二次开发的 Web 化人机协作编程 agent。
+一个本地运行的 Web Coding Agent。它会实时展示执行过程，按工作空间保存对话，并在写文件或执行高风险命令前等待用户确认。
 
-中文 | [English](README.md)
+中文文档 · [English](README.md) · [上游 CoreCoder](https://github.com/he-yufeng/CoreCoder)
 
-## 项目状态
+[![CI](https://github.com/satzu0228/CoreCoder-Web/actions/workflows/ci.yml/badge.svg)](https://github.com/satzu0228/CoreCoder-Web/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB) ![Vue](https://img.shields.io/badge/Vue-3-42b883) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-✅ **v2 对话工作台已经落地。** 左侧改为当前工作空间的对话历史，右侧使用气泡式聊天，并以内联执行轨迹展示工具过程。会话可跨服务重启恢复，SSE 与确认接口按会话路由，Monaco Diff 继续按需弹窗展示。v2 实际完成情况见 [`docs/v2 优化规划.md`](<docs/v2 优化规划.md>)，后续工作见 [`docs/v3 优化规划.md`](<docs/v3 优化规划.md>)。
+> CoreCoder-Web 基于 CoreCoder 的轻量 Python Agent Runtime 开发。模型与工具的循环仍由 Runtime 负责；Web 层只处理会话、事件传输、取消恢复和人工确认。
 
-## 这是什么
+## 为什么做这个项目
 
-本项目基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) 的 agent runtime（约一千行的极简 coding agent，agent 主循环、LLM 客户端、工具基类原样复用），在其之上新增两件事：
+Coding Agent 从终端搬到浏览器后，问题不只是多一个聊天界面。用户需要知道它正在调用什么工具，刷新页面后不能丢掉任务过程，长任务要能停止，文件写入和危险命令也不能悄悄执行。
 
-1. **把终端交互循环变成 Web 原生的循环** —— SSE 事件流、workspace 绑定、agent 执行过程的实时可视化，而不只是一问一答的聊天。
-2. **在工具执行层嵌入人机协作（human-in-the-loop）执行模型** —— Web 模式下，`edit_file`/`write_file` 先展示 diff，`bash` 命中危险模式时展示命令，用户批准后才真正生效；CLI 保持原有编辑行为。
+CoreCoder-Web 围绕这些问题补齐了 Web 运行链路：
 
-第 2 点是工程量的重心，也是这个项目大部分设计精力投入的地方。
+- 浏览器通过 SSE 接收 token、工具调用、执行结果、状态变化和确认请求。
+- `edit_file`、`write_file` 先生成 diff，用户通过后才写入磁盘。
+- `bash` 普通命令直接执行；命中 POSIX、PowerShell 或 CMD 高风险规则时暂停并询问。
+- 点击停止会中断模型流、唤醒确认等待，并终止 Shell 子进程树。
+- SSE 事件带递增序号，断线后可以重放缺失事件。
 
-## 整体架构
+## 已实现功能
 
+### Coding Agent 工作流
+
+- Markdown 流式回复，使用 DOMPurify 清洗并限制渲染频率
+- 内联执行轨迹，展示工具开始、参数和结果
+- Monaco Diff 弹窗，确认写入前查看改动
+- 工作空间文件选择器，通过 `@path/to/file` 关联文件
+- 上下文用量提示和压缩通知
+- 7 个内置工具：`read_file`、`write_file`、`edit_file`、`glob`、`grep`、`bash`、子 Agent 委派
+
+### 对话工作台
+
+- 新建、重命名、搜索、归档、恢复和批量删除对话
+- 会话按当前 workspace 隔离，以 JSON 文件持久化
+- 轻量 metadata 索引、原子写入、消息数量限制和 Unix 文件权限收紧
+- 页面刷新后恢复消息、待确认操作和仍在运行的 SSE 任务
+- 同一时间只允许一个 Agent 任务运行，状态包括 `running`、`waiting_confirmation`、`cancelling`、`cancelled`、`interrupted` 和 `error`
+
+### 安全与可靠性
+
+- 服务只绑定 `127.0.0.1`，API 使用启动时生成的随机 token
+- Web 文件操作会拒绝 workspace 之外的路径
+- 多个确认型工具并行出现时按顺序处理，不会互相覆盖弹窗
+- 取消任务会关闭模型流、释放确认等待并终止 Shell 进程树
+- 工具执行中断后自动补齐消息历史，避免下一轮模型请求因 tool reply 缺失而失败
+- CI 在 Linux、macOS、Windows 上覆盖 Python 3.10–3.13，并执行前端测试、类型检查和生产构建
+
+## 架构
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│ Vue 3 + TypeScript                                          │
+│ 对话管理 · 执行轨迹 · 人工确认 · Monaco Diff               │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ HTTP + SSE
+┌──────────────────────────▼──────────────────────────────────┐
+│ FastAPI Web 层                                               │
+│ token 校验 · 事件缓冲/重放 · session API · workspace 边界  │
+└───────────────┬──────────────────────────┬──────────────────┘
+                │                          │
+┌───────────────▼──────────────┐  ┌────────▼──────────────────┐
+│ CoreCoder Agent Runtime      │  │ WebSessionManager         │
+│ LLM → tool calls → results   │  │ workspace JSON + 索引     │
+└───────────────┬──────────────┘  └───────────────────────────┘
+                │
+┌───────────────▼─────────────────────────────────────────────┐
+│ Tool 层                                                      │
+│ 路径边界 · diff 审批 · 高风险命令确认                       │
+└─────────────────────────────────────────────────────────────┘
 ```
-Vue3 + TS + Naive UI + Monaco
-            │  SSE
-      FastAPI Web Server
-            │
-   ┌────────┴────────┐
-Agent Runtime      WebSessionManager
-   │
-   ├─ 按 workspace 隔离的对话持久化
-   ├─ Web 路径约束: read_file / grep / glob
-   └─ 人工确认:
-        ├─ edit_file / write_file  先算 diff → confirm_required → 通过才写入
-        └─ bash                    命中危险模式后挂起询问
+
+系统里有两个职责不同的循环：
+
+1. Web 循环启动一次 Agent turn，并把可观察事件传给浏览器，不参与工具选择。
+2. Agent 循环调用模型、执行 tool call、追加结果，直到模型返回最终回答。
+
+人工确认放在 Tool 层。写入工具准备好 diff 后发出 `confirm_required`，阻塞在 `threading.Event` 上；确认接口处理对应事件后，工具才继续执行。这样 CLI 与 Web 仍能共用同一套同步工具协议。
+
+## 快速开始
+
+需要 Python 3.10+。如果要修改前端，还需要 Node.js 20+。
+
+```bash
+git clone https://github.com/satzu0228/CoreCoder-Web.git
+cd CoreCoder-Web
+
+python -m pip install -e ".[dev]"
+npm ci
+npm run build
 ```
 
-图里其实叠着两层循环，职责边界要分清楚：
+在项目目录创建 `.env`，也可以设置同名环境变量：
 
-- **外层循环（Web 层）** —— 接收输入，调一次 `agent.chat()`，把过程事件转发成 SSE，接收确认。不做任何推理或工具调度的判断。
-- **内层循环（Agent Runtime）** —— 调 LLM、判断 tool_call、执行工具、继续推理。完整复用 CoreCoder 原有实现，FastAPI 路由不会伸手进去改这一层的逻辑。
+```dotenv
+OPENAI_API_KEY=your-api-key
+CORECODER_MODEL=gpt-5.5
+# OPENAI_BASE_URL=https://your-openai-compatible-endpoint/v1
+```
 
-## 人机协作设计
+进入希望 Agent 操作的目录后启动 Web 模式：
 
-CoreCoder 的工具执行是同步的：`tool.execute()` 返回字符串，循环立刻问模型下一步。要在不改写 agent 主循环的前提下插入"等人确认"这一步，落到三个部件：
+```bash
+corecoder web
+```
 
-- **模块级事件总线**（`events.emit`），作为 `tool_end` / `confirm_required` 的统一出口；`tool_start` 由 `agent.chat()` 的回调进入同一条 SSE 队列。
-- **`ConfirmRegistry`** —— 一个加锁的 `event_id → threading.Event` 映射。工具调 `create()`、发出 `confirm_required`，然后阻塞在 `wait()` 上；`POST /api/confirm` 调 `resolve()` 释放它。超时清理和正常返回走的是同一个锁块，内部两本字典不会出现"一本清了、另一本没清"的不一致。
-- **单独的拒绝错误路径** —— 用户否决一次修改，既不是参数错误也不是执行失败。这个结果必须能被模型明确识别出来，让它去重新和用户沟通方案，而不是当成报错去盲目重试同一个工具调用。
+程序会选择一个空闲端口，输出带随机 token 的本地地址并打开浏览器。启动命令所在目录就是 workspace 边界。
 
-`EditFileTool` 和 `WriteFileTool` 在写入前生成 diff，确认通过才写文件。多个确认型工具并行出现时会按顺序弹出，避免单个确认框互相覆盖。`BashTool` 只对命中危险模式的命令询问，普通命令（比如 `npm test`）不会被打断。
+Web 对话保存在 `~/.corecoder/web-sessions/<workspace-hash>/`。不要提交这个目录，session 文件可能包含提示词、源码片段、diff 和命令输出。
 
-## 技术栈
+原有 CLI 仍可使用：
 
-| 层 | 选择 |
-|---|---|
-| Agent runtime | 复用 CoreCoder 主循环；`agent.py` 仅增加工具结束事件，`llm.py` / `context.py` 保持原样 |
-| 后端 | FastAPI + Server-Sent Events |
-| 前端 | Vue 3 + TypeScript + Naive UI + Monaco Editor |
-| 对话状态 | 按 workspace 隔离的 JSON session；同一时间只运行一个 Agent 任务 |
-| 确认状态 | 进程内 `threading.Event`，通过 Web session 路由 |
+```bash
+corecoder                         # 交互式 REPL
+corecoder -p "解释这个项目"       # 单次任务
+corecoder --demo                  # 不需要 API Key 的离线演示
+```
 
-## 里程碑
+如果模型需要通过 LiteLLM 接入：
 
-| 阶段 | 交付 |
-|---|---|
-| MVP | SSE 对话、工具事件、编辑/写入/命令确认、按需加载 Monaco Diff |
-| v2 M1 | 工作空间级对话存储与 session API |
-| v2 M2 | 对话侧栏、气泡消息与链式 Agent 执行轨迹 |
-| v2 M3 | 按 session 路由聊天和确认、刷新恢复、单任务运行锁 |
-| v3 | Markdown 安全清洗、任务取消、事件恢复、性能治理与自动化测试 |
+```bash
+python -m pip install -e ".[litellm]"
+```
+
+然后设置 `CORECODER_PROVIDER=litellm` 和对应的模型名称。
 
 ## 开发与验证
 
 ```bash
-pip install -e ".[dev]"
-npm ci
+python -m pytest -q
+ruff check corecoder tests
+python -m compileall -q corecoder tests
+
+npm run test
 npm run type-check
 npm run build
-python -m pytest tests/ -q
-ruff check corecoder tests
 ```
 
-`corecoder web` 会绑定当前目录作为 workspace。源码仓库未构建 Vue 时会回退到精简前端；CI 和发布流程会先构建 Vue，并把 `static/dist` 打进 wheel。
+Vite 会把生产资源写入 `corecoder/web/static/dist/`，Python wheel 会包含这个目录。源码环境没有前端构建时，服务会回退到精简静态页面。
 
-## License
+## 当前边界
 
-MIT，继承自上游项目。见 [LICENSE](LICENSE)。
+- 项目面向本地单用户使用，没有按公网服务做安全加固。
+- 不同 workspace 的会话互相隔离，但一个进程同一时间只运行一个任务。
+- session 保存在本地 JSON 文件中，没有引入数据库。
+- 确认请求和实时事件保存在进程内存；历史对话能跨重启恢复，正在执行的任务不会自动续跑。
+
+这些限制让运行时保持轻量，也让副作用容易检查。README 不会把它描述成已经具备多用户和远程部署能力的产品。
+
+## 上游与 License
+
+CoreCoder-Web 是 [he-yufeng/CoreCoder](https://github.com/he-yufeng/CoreCoder) 的二次开发。Agent 主循环、模型适配层、CLI 基础和原始工具抽象来自上游；Web 工作台与可靠性改造在本仓库完成。
+
+项目使用 [MIT License](LICENSE)。

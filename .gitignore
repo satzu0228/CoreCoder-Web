@@ -15,6 +15,7 @@ venv/
 .DS_Store
 .pytest_cache/
 .tmp/
+docs/
 # Frontend
 node_modules/
 corecoder/web/static/dist/

@@ -30,6 +30,16 @@ def _create_session(client, headers=None):
     return resp.json()["session"]["id"]
 
 
+def _existing_session(client, headers=None):
+    """Return the sole session automatically created from a populated agent."""
+    h = headers or {"X-CoreCoder-Token": TOKEN}
+    resp = client.get("/api/sessions", headers=h)
+    assert resp.status_code == 200
+    sessions = resp.json()["sessions"]
+    assert len(sessions) == 1
+    return sessions[0]["id"]
+
+
 def _parse_sse(text: str) -> list[dict]:
     events = []
     for frame in text.split("\n\n"):
@@ -422,7 +432,7 @@ def test_session_messages_returns_ui_dto_with_completed_tool_calls():
     ]
     client = TestClient(create_app(agent, TOKEN))
     headers = {"X-CoreCoder-Token": TOKEN}
-    sid = _create_session(client, headers)
+    sid = _existing_session(client, headers)
 
     resp = client.get(f"/api/sessions/{sid}", headers=headers)
 
@@ -453,8 +463,8 @@ def test_session_messages_marks_unanswered_tool_call_running():
     app = create_app(agent, TOKEN)
     client = TestClient(app)
     headers = {"X-CoreCoder-Token": TOKEN}
-    # The pre-populated agent messages will create a session automatically
-    sid = _create_session(client, headers)
+    # The pre-populated agent messages create a session automatically.
+    sid = _existing_session(client, headers)
 
     resp = client.get(f"/api/sessions/{sid}", headers=headers)
 

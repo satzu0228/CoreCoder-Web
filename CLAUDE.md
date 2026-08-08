@@ -1,68 +1,72 @@
 # CLAUDE.md
 
-## 项目是什么
+本文件面向参与 CoreCoder-Web 开发的代码 Agent 和开发者。项目说明与使用方式见 [README_CN.md](README_CN.md)。
 
-CoreCoder-Web 是对开源项目 [CoreCoder](https://github.com/he-yufeng/CoreCoder)（一个约 1,000 行的极简 CLI coding agent）的二次开发，目标是把它扩展成一个 **Web 化、支持人机协作（human-in-the-loop）审批的 coding agent**。
+## 项目定位
 
-不是给 CoreCoder 套一个聊天网页。真正要做的是两件事：
+CoreCoder-Web 基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) 的轻量 Agent Runtime，增加了本地 Web 工作台和 Human-in-the-loop 工具审批。
 
-1. 把终端交互循环改造成 Web 交互（workspace 绑定、SSE 流式事件、执行过程可视化）
-2. 在 agent 的工具执行层加入人机协作确认机制：Web 模式下 `edit_file`/`write_file` 写入前、`bash` 命中危险命令时，先弹出确认，用户批准后才真正执行
-
-第 2 点是这个项目的技术含量所在，也是设计和开发时应该优先打磨的部分。
+Runtime 负责模型调用、tool call 调度和上下文管理。FastAPI 层负责会话、SSE、取消恢复和 workspace API；Vue 前端展示对话、执行轨迹、确认弹窗和 Monaco Diff。
 
 ## 当前状态
 
-MVP 的 Web 核心闭环和 v2 P0 体验修复已经落地：`corecoder/web/`、Vue3 前端、SSE 工具事件、虚拟文件树、按需 Monaco Diff、刷新恢复和确认流程均存在。2026-08-08 完成了 CLI 兼容、通用确认、并行确认串行化、Web 文件路径约束、前端发布构建，以及对话恢复/Monaco 瘦身/文件树虚拟化。
+MVP、v2 和 v3 已完成。当前代码包含：
 
-当前阶段是体验和可靠性优化，不再是设计阶段。判断实现状态时以代码、测试和 `docs/开发日志.md` 为准；`docs/MVP 需求文档.md` 保留设计意图，允许开发日志记录经过验证的实现偏差。
+- workspace 级多会话持久化、搜索、归档和批量删除；
+- token、工具事件、状态、上下文信息的 SSE 传输；
+- 事件序号、缓冲和断线重放；
+- 模型流、确认等待和 Bash 进程树取消；
+- Markdown 清洗与流式渲染节流；
+- edit/write diff 审批和跨平台危险命令确认；
+- Python 测试、Vitest、TypeScript 类型检查与多平台 CI。
 
-## 权威设计文档
+判断行为时以代码和测试为准。本地开发笔记不属于发布内容，也不是当前待办列表。
 
-详细设计全部写在 `docs/MVP 需求文档.md` 里，是这个项目所有架构决策的唯一权威来源。做任何实现前应先读它，尤其是：
+## 设计边界
 
-- 3.1 节：为什么用「单次调用内阻塞」而不是「分两轮对话」实现确认
-- 3.2 节：确认最初在具体工具中验证，现已提炼为 `web/_confirmable.py` 的通用函数；不要再复制 registry 调用序列
-- 3.3 节：「用户拒绝确认」是独立于「参数错误」「执行错误」的第三类结果，不能套进 `except Exception` 里拍扁
-- 3.4 节：`session.py` 现有的对话历史持久化和新增的运行时状态（`RUNNING`/`WAIT_CONFIRM`/`DONE`）是两个概念，不要混在一起
-- 7 节：安全设计——只绑 `127.0.0.1`、URL 带随机 token、路径越界校验、bash 黑名单确认
+- 应用只绑定 `127.0.0.1`，按本地单用户工具设计，不作为公网多租户服务运行。
+- `corecoder web` 的启动目录是 workspace 边界，Web 文件 API 和文件工具不能越界。
+- 一个进程同一时间只允许一个 Agent run。不要只移除运行锁就宣称支持并发。
+- Human-in-the-loop 位于 Tool 层。路由只解析和转发确认结果，不在 HTTP 层复制工具业务逻辑。
+- Agent 主循环仍保持“模型 → tool calls → 工具结果 → 继续模型”的结构。新增能力应优先使用明确的回调、事件或上下文，而不是在路由中绕过 Runtime。
+- LLM 层可以处理流取消和 provider 兼容，但 Web 路由不能直接调用模型 API。
+- 用户拒绝确认是业务结果，不是参数错误或工具异常。模型需要收到明确结果后重新选择方案。
+- 现有工具集合已经覆盖项目读写与检索。新增工具前先判断能否由 `glob`、`grep`、`read_file` 等组合完成。
 
-`docs/学习记录.md` 和 `docs/开发注意点.md` 是开发过程中的学习笔记和注意事项，可作为背景参考，不是设计依据。
+## 目录
 
-## 硬约束
-
-- **不改动 `llm.py`。** API 调用、stream、retry、provider 兼容这一层保持原样，新代码不直接调 LLM API。
-- **不重写 agent 主循环。** `agent.py` 里 `chat()` 的核心结构（问模型 → 判断 tool_calls → 执行 → 继续）保持不变，扩展点集中在工具执行阶段的事件回调和确认机制上，通过模块级事件总线 `events.emit` 打通，而不是改 `_exec_tool` 的调度逻辑。
-- **单用户、单 workspace 是 MVP 的前提假设。** `ConfirmRegistry`、事件总线等仍是模块级单例；并行确认通过 `_confirmation_gate` 逐个展示。多 workspace/多用户需要按 `session_id` 隔离，属于后续产品范围。
-- **不建独立 Diff 页面，不新增 `workspace_search`/`analyze_project` 之类的工具。** agent 靠 `glob`+`read_file`+`grep` 组合已经够用，专门建工具收益不明确。
-
-## 目录结构
-
+```text
+corecoder/                    Python Agent Runtime 与 CLI
+corecoder/web/                FastAPI、session、SSE、确认和 workspace API
+corecoder/web/static/dist/    Vue 生产构建产物
+src/                          Vue 3 + TypeScript 前端
+tests/                        pytest 与 Vitest 测试
+.github/workflows/            CI 与 PyPI 发布流程
 ```
-corecoder/          agent runtime + FastAPI Web 层（corecoder/web/）
-src/                Vue3 + TypeScript 前端源码
-docs/               设计文档、开发计划、开发日志与 v2 规划
-tests/               pytest 测试
-.github/workflows/   CI（pytest + ruff + compileall + 前端类型检查/构建）与发布
-README.md / README_CN.md   项目展示用 README，面向 GitHub 访客和技术面试官
-```
 
-Web 层代码位于 `corecoder/web/`。Vue 构建产物写入 `corecoder/web/static/dist/`，发布工作流会先构建前端再构建 Python wheel；没有 dist 的源码环境会回退到 `static/index.html`。
+## 修改时要注意
 
-## 开发与验证
+- `WebSessionManager` 的 metadata 索引是缓存，正式 session JSON 才是持久化数据源。
+- Assistant 的 tool call 与对应 tool reply 必须成对；取消或异常不能留下损坏的消息历史。
+- SSE 新事件应带 session 与 sequence，并同时考虑首次连接、重连重放和全量 resync。
+- 前端不能在每个 token 上重新解析整段长 Markdown，也不能在用户向上阅读时强制滚动到底部。
+- 写文件、删除、归档等操作要保留运行态冲突检查。路径相关逻辑必须使用解析后的 workspace 边界。
+- 不要提交 `.env`、本地 session、测试截图或临时服务脚本。
+
+## 验证
 
 ```bash
-pip install -e ".[dev]"
-npm ci
+python -m pytest -q
+ruff check corecoder tests
+python -m compileall -q corecoder tests
+
+npm run test
 npm run type-check
 npm run build
-python -m pytest tests/ -q      # 跑测试
-ruff check corecoder tests      # lint
-python -m compileall -q corecoder tests
 ```
 
-CI 在 Ubuntu/macOS/Windows 上跑 Python 3.10–3.13 测试矩阵，并在 Ubuntu 上验证前端类型与生产构建。提交前应保证以上命令全部通过。
+CI 在 Ubuntu、macOS、Windows 上测试 Python 3.10–3.13；前端 job 使用 Node.js 20。发布前会先构建 Vue，再把 `corecoder/web/static/dist/` 打入 Python wheel。
 
-## 与上游 CoreCoder 的关系
+## 上游关系
 
-`corecoder/` 里未改动的部分（尤其 `llm.py` 的 provider 适配、`context.py` 的三层压缩、`session.py` 的对话历史持久化）应保持上游风格。文件工具只增加 Web workspace 边界，`edit.py`/`write.py`/`bash.py` 增加确认流程；不要借 Web 开发之机重写无关的 Runtime。
+仓库保留 CoreCoder 的 Agent/CLI 基础，同时对 `agent.py`、`llm.py`、`context.py` 和工具层做了 Web 可靠性扩展。修改这些文件时要区分“上游 Runtime 行为”和“CoreCoder-Web 新增能力”，不要为了前端需求重写无关的 provider 或上下文逻辑。
