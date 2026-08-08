@@ -22,6 +22,14 @@ def _make_client(turns):
     return TestClient(app)
 
 
+def _create_session(client, headers=None):
+    """Create a session and return its id."""
+    h = headers or {"X-CoreCoder-Token": TOKEN}
+    resp = client.post("/api/sessions", headers=h)
+    assert resp.status_code == 201
+    return resp.json()["session"]["id"]
+
+
 def _parse_sse(text: str) -> list[dict]:
     events = []
     for frame in text.split("\n\n"):
@@ -39,14 +47,16 @@ def test_index_is_public_and_needs_no_token():
 
 def test_chat_without_token_is_rejected():
     client = _make_client([LLMResponse(content="hi")])
-    resp = client.post("/api/chat", json={"message": "hello"})
+    sid = _create_session(client)
+    resp = client.post(f"/api/sessions/{sid}/chat", json={"message": "hello"})
     assert resp.status_code == 403
 
 
 def test_chat_with_wrong_token_is_rejected():
     client = _make_client([LLMResponse(content="hi")])
+    sid = _create_session(client)
     resp = client.post(
-        "/api/chat",
+        f"/api/sessions/{sid}/chat",
         json={"message": "hello"},
         headers={"X-CoreCoder-Token": "wrong"},
     )
@@ -55,10 +65,12 @@ def test_chat_with_wrong_token_is_rejected():
 
 def test_chat_streams_tokens_then_done():
     client = _make_client([LLMResponse(content="hello world")])
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
     resp = client.post(
-        "/api/chat",
+        f"/api/sessions/{sid}/chat",
         json={"message": "say hi"},
-        headers={"X-CoreCoder-Token": TOKEN},
+        headers=headers,
     )
     assert resp.status_code == 200
 
@@ -75,17 +87,19 @@ def test_chat_reports_agent_errors_without_crashing_the_stream():
         total_prompt_tokens = 0
         total_completion_tokens = 0
 
-        def chat(self, messages, tools=None, on_token=None):
+        def chat(self, messages, tools=None, on_token=None, cancel_event=None):
             raise RuntimeError("boom")
 
     agent = Agent(llm=_BrokenLLM(), tools=[])
     app = create_app(agent, TOKEN)
     client = TestClient(app)
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
 
     resp = client.post(
-        "/api/chat",
+        f"/api/sessions/{sid}/chat",
         json={"message": "say hi"},
-        headers={"X-CoreCoder-Token": TOKEN},
+        headers=headers,
     )
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
@@ -96,8 +110,9 @@ def test_chat_reports_agent_errors_without_crashing_the_stream():
 
 def test_chat_accepts_token_as_query_param_too():
     client = _make_client([LLMResponse(content="ok")])
+    sid = _create_session(client, {"X-CoreCoder-Token": TOKEN})
     resp = client.post(
-        "/api/chat",
+        f"/api/sessions/{sid}/chat",
         params={"token": TOKEN},
         json={"message": "hello"},
     )
@@ -127,11 +142,13 @@ def test_chat_emits_tool_start_and_tool_end_events():
     agent = Agent(llm=ScriptedLLM(turns), tools=[bash_tool])
     app = create_app(agent, TOKEN)
     client = TestClient(app)
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
 
     resp = client.post(
-        "/api/chat",
+        f"/api/sessions/{sid}/chat",
         json={"message": "run echo"},
-        headers={"X-CoreCoder-Token": TOKEN},
+        headers=headers,
     )
     assert resp.status_code == 200
 
@@ -155,52 +172,63 @@ def test_chat_emits_tool_start_and_tool_end_events():
 
 
 def test_confirm_endpoint_rejects_invalid_token():
-    """POST /api/confirm rejects requests without valid token."""
+    """POST /api/sessions/{id}/confirm rejects requests without valid token."""
     client = _make_client([LLMResponse(content="hi")])
+    sid = _create_session(client, {"X-CoreCoder-Token": TOKEN})
     resp = client.post(
-        "/api/confirm",
+        f"/api/sessions/{sid}/confirm",
         json={"id": "some-id", "approve": True},
     )
     assert resp.status_code == 403
 
 
 def test_confirm_endpoint_resolves_pending_confirmation():
-    """POST /api/confirm correctly resolves a pending confirmation."""
+    """POST /api/sessions/{id}/confirm correctly resolves a pending confirmation."""
     from corecoder.web.confirm_registry import registry
 
     client = _make_client([LLMResponse(content="ok")])
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
 
-    # Create a pending confirmation
+    # Create a pending confirmation and mark the session as waiting
     event_id = registry.create(payload={"action": "test", "test": "data"})
+    client.app.state.sessions.set_status(sid, "waiting_confirmation")
+    client.app.state.sessions.running_session_id = sid
 
-    # Approve it via the endpoint
+    # Approve it via the session-scoped endpoint
     resp = client.post(
-        "/api/confirm",
+        f"/api/sessions/{sid}/confirm",
         json={"id": event_id, "approve": True},
-        headers={"X-CoreCoder-Token": TOKEN},
+        headers=headers,
     )
     assert resp.status_code == 200
 
 
 def test_confirm_returns_404_for_expired_id():
-    """POST /api/confirm returns 404 for timed-out or non-existent IDs."""
+    """POST /api/sessions/{id}/confirm returns 404 for timed-out or non-existent IDs."""
     client = _make_client([LLMResponse(content="ok")])
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
+    client.app.state.sessions.set_status(sid, "waiting_confirmation")
+    client.app.state.sessions.running_session_id = sid
 
     # Try to confirm a non-existent ID
     resp = client.post(
-        "/api/confirm",
+        f"/api/sessions/{sid}/confirm",
         json={"id": "non-existent-id", "approve": True},
-        headers={"X-CoreCoder-Token": TOKEN},
+        headers=headers,
     )
     assert resp.status_code == 404
 
 
 def test_get_session_pending_returns_null_when_none():
-    """GET /api/session/pending returns null when no confirmation pending."""
+    """GET /api/sessions/{id}/pending returns null when no confirmation pending."""
     client = _make_client([LLMResponse(content="ok")])
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
 
     resp = client.get(
-        "/api/session/pending",
+        f"/api/sessions/{sid}/pending",
         params={"token": TOKEN},
     )
     assert resp.status_code == 200
@@ -209,11 +237,13 @@ def test_get_session_pending_returns_null_when_none():
 
 
 def test_get_session_pending_returns_payload_when_waiting():
-    """GET /api/session/pending returns full payload of pending confirmation."""
+    """GET /api/sessions/{id}/pending returns full payload of pending confirmation."""
     from corecoder.web.confirm_registry import registry
     import threading
 
     client = _make_client([LLMResponse(content="ok")])
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
 
     # Create a pending confirmation with payload
     payload = {
@@ -222,6 +252,9 @@ def test_get_session_pending_returns_payload_when_waiting():
         "reason": "force recursive delete",
     }
     event_id = registry.create(payload=payload)
+    # Mark the session as waiting so the endpoint returns the payload
+    client.app.state.sessions.set_status(sid, "waiting_confirmation")
+    client.app.state.sessions.running_session_id = sid
 
     # Query the endpoint (in a thread to avoid blocking on wait())
     def resolve_later():
@@ -233,7 +266,7 @@ def test_get_session_pending_returns_payload_when_waiting():
     thread.start()
 
     resp = client.get(
-        "/api/session/pending",
+        f"/api/sessions/{sid}/pending",
         params={"token": TOKEN},
     )
     assert resp.status_code == 200
@@ -388,11 +421,12 @@ def test_session_messages_returns_ui_dto_with_completed_tool_calls():
         {"role": "assistant", "content": "Done."},
     ]
     client = TestClient(create_app(agent, TOKEN))
+    headers = {"X-CoreCoder-Token": TOKEN}
+    sid = _create_session(client, headers)
 
-    resp = client.get("/api/session/messages", headers={"X-CoreCoder-Token": TOKEN})
+    resp = client.get(f"/api/sessions/{sid}", headers=headers)
 
     assert resp.status_code == 200
-    assert resp.json()["running"] is False
     messages = resp.json()["messages"]
     assert [message["role"] for message in messages] == ["user", "assistant"]
     assert messages[1]["content"] == "Done."
@@ -417,12 +451,14 @@ def test_session_messages_marks_unanswered_tool_call_running():
         }],
     }]
     app = create_app(agent, TOKEN)
-    app.state.agent_running = True
+    client = TestClient(app)
+    headers = {"X-CoreCoder-Token": TOKEN}
+    # The pre-populated agent messages will create a session automatically
+    sid = _create_session(client, headers)
 
-    resp = TestClient(app).get("/api/session/messages", headers={"X-CoreCoder-Token": TOKEN})
+    resp = client.get(f"/api/sessions/{sid}", headers=headers)
 
     assert resp.status_code == 200
-    assert resp.json()["running"] is True
     tool_call = resp.json()["messages"][0]["toolCalls"][0]
     assert tool_call["status"] == "running"
     assert tool_call["args"] == {"raw": "not-json"}

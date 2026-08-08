@@ -33,8 +33,13 @@ export function useAgentStream() {
     'X-CoreCoder-Token': store.token,
   })
 
-  async function refreshSessions() {
-    const response = await fetch('/api/sessions', { headers: headers() })
+  async function refreshSessions(search?: string, includeArchived = false) {
+    const params = new URLSearchParams()
+    if (search) params.set('search', search)
+    if (includeArchived) params.set('archived', 'true')
+    const qs = params.toString()
+    const url = qs ? `/api/sessions?${qs}` : '/api/sessions'
+    const response = await fetch(url, { headers: headers() })
     if (!response.ok) throw new Error(`无法读取对话列表（${response.status}）`)
     const data = await response.json()
     store.workspaceName = data.workspace?.name || 'Workspace'
@@ -48,6 +53,7 @@ export function useAgentStream() {
     const data = await response.json()
     store.setMessages(sessionId, (data.messages || []) as Message[])
     store.updateSession(sessionId, data.session || {})
+    if (data.token_stats) store.tokenStats = data.token_stats
   }
 
   async function selectSession(sessionId: string) {
@@ -310,6 +316,25 @@ export function useAgentStream() {
             store.updateSession(sessionId, { status: 'error' })
           } else if (event.type === 'status' && !hasStreamActivity) {
             assistant.statusText = event.message || '等待模型响应'
+          } else if (event.type === 'context_info') {
+            store.tokenStats = {
+              current: event.token_estimate,
+              max: event.max_tokens,
+              ratio: event.max_tokens ? event.token_estimate / event.max_tokens : 0,
+            }
+          } else if (event.type === 'context_compressed') {
+            const labels: Record<string, string> = {
+              tool_snip: '工具输出过长，已自动精简',
+              summarize: '对话历史较长，已自动压缩早期内容',
+              hard_collapse: '上下文接近上限，已大幅压缩历史内容',
+            }
+            store.compressionNotice = labels[event.layer] || '上下文已压缩'
+            store.tokenStats = {
+              current: event.after_tokens,
+              max: store.tokenStats?.max || 128000,
+              ratio: (store.tokenStats?.max ? event.after_tokens / store.tokenStats.max : 0),
+            }
+            setTimeout(() => { store.compressionNotice = '' }, 4000)
           } else if (event.type === 'done') {
             streamCompleted = true
           }
@@ -404,6 +429,18 @@ export function useAgentStream() {
             store.pendingConfirm = { ...event, session_id: sessionId } as ConfirmEvent
             store.pendingConfirmRestored = false
             store.updateSession(sessionId, { status: 'waiting_confirmation' })
+          } else if (event.type === 'context_info') {
+            store.tokenStats = {
+              current: event.token_estimate,
+              max: event.max_tokens,
+              ratio: event.max_tokens ? event.token_estimate / event.max_tokens : 0,
+            }
+          } else if (event.type === 'context_compressed') {
+            store.tokenStats = {
+              current: event.after_tokens,
+              max: store.tokenStats?.max || 128000,
+              ratio: (store.tokenStats?.max ? event.after_tokens / store.tokenStats.max : 0),
+            }
           } else if (event.type === 'resync_required') {
             // Buffer doesn't cover our range — full reload
             store.setMessages(sessionId, event.messages || [])
@@ -428,6 +465,31 @@ export function useAgentStream() {
       reader.releaseLock()
       assistant.isStreaming = false
       await refreshSessions().catch(() => undefined)
+    }
+  }
+
+  async function toggleArchive(sessionId: string) {
+    const session = store.sessions.find(item => item.id === sessionId)
+    if (!session) return
+    const action = session.archived ? 'unarchive' : 'archive'
+    const response = await fetch(`/api/sessions/${sessionId}/${action}`, { method: 'POST', headers: headers() })
+    if (!response.ok) throw new Error(`无法${action === 'archive' ? '归档' : '取消归档'}对话（${response.status}）`)
+    const data = await response.json()
+    store.updateSession(sessionId, data.session as SessionSummary)
+  }
+
+  async function batchDeleteSessions(sessionIds: string[]) {
+    const response = await fetch('/api/sessions', {
+      method: 'DELETE', headers: headers(true), body: JSON.stringify({ session_ids: sessionIds }),
+    })
+    if (!response.ok) throw new Error(`批量删除失败（${response.status}）`)
+    for (const id of sessionIds) {
+      delete store.messagesBySession[id]
+    }
+    store.sessions = store.sessions.filter(item => !sessionIds.includes(item.id))
+    if (sessionIds.includes(store.activeSessionId || '')) {
+      if (store.sessions.length) await selectSession(store.sessions[0].id)
+      else await createSession()
     }
   }
 
@@ -473,6 +535,8 @@ export function useAgentStream() {
     deleteSession,
     sendMessage,
     cancelRun,
+    toggleArchive,
+    batchDeleteSessions,
     submitConfirm,
     checkPendingConfirm,
   }

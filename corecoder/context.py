@@ -49,22 +49,41 @@ class ContextManager:
 
         # Layer 1: snip verbose tool outputs
         if current > self._snip_at:
+            before = current
             if self._snip_tool_outputs(messages):
                 compressed = True
                 current = estimate_tokens(messages)
+                self._emit_compressed("tool_snip", before, current)
 
         # Layer 2: LLM-powered summarization of old turns
         if current > self._summarize_at and len(messages) > 10:
+            before = current
             if self._summarize_old(messages, llm, keep_recent=8):
                 compressed = True
                 current = estimate_tokens(messages)
+                self._emit_compressed("summarize", before, current)
 
         # Layer 3: hard collapse - last resort
         if current > self._collapse_at and len(messages) > 4:
+            before = current
             self._hard_collapse(messages, llm)
             compressed = True
+            current = estimate_tokens(messages)
+            self._emit_compressed("hard_collapse", before, current)
 
         return compressed
+
+    @staticmethod
+    def _emit_compressed(layer: str, before_tokens: int, after_tokens: int) -> None:
+        """Emit a context_compressed SSE event (no-op when no Web emitter is set)."""
+        # Delayed import to avoid circular dependency at module level
+        from .web import events
+        events.emit("context_compressed", {
+            "type": "context_compressed",
+            "layer": layer,
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+        })
 
     @staticmethod
     def _snip_tool_outputs(messages: list[dict]) -> bool:

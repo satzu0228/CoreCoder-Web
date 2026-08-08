@@ -38,7 +38,7 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _start_chat(req: ChatRequest, request: Request, session_id: str, *, tag_session: bool = True):
+def _start_chat(req: ChatRequest, request: Request, session_id: str):
     manager = request.app.state.sessions
     try:
         session = manager.begin_run(session_id)
@@ -66,7 +66,7 @@ def _start_chat(req: ChatRequest, request: Request, session_id: str, *, tag_sess
     def tagged(data: dict) -> dict:
         seq_counter[0] += 1
         result = {**data, "sequence": seq_counter[0]}
-        return {**result, "session_id": session_id} if tag_session else result
+        return {**result, "session_id": session_id}
 
     def push(event_type: str, data: dict):
         if event_type == "confirm_required":
@@ -271,10 +271,3 @@ async def session_events(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
-
-
-@router.post("/api/chat")
-async def chat(req: ChatRequest, request: Request):
-    """Compatibility route forwarding to the most recent conversation."""
-    session = request.app.state.sessions.ensure_default()
-    return _start_chat(req, request, session.id, tag_session=False)

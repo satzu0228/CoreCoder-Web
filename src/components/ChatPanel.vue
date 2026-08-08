@@ -11,7 +11,15 @@
           {{ headerStatus }}
         </span>
       </div>
-      <div class="ml-auto px-2 py-[5px] border border-brand-200 rounded-md bg-brand-50 text-brand-600 font-medium text-[10px] font-mono max-md:hidden">{{ store.activeSession?.model || 'CoreCoder' }}</div>
+      <div class="ml-auto flex items-center gap-3">
+        <div v-if="contextPercent !== null" class="flex items-center gap-1.5" :title="contextTooltip">
+          <div class="w-14 h-1.5 rounded-full bg-brand-200 overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-300" :class="contextBarClass" :style="{ width: contextPercent + '%' }"></div>
+          </div>
+          <span class="text-brand-400 font-medium text-[10px] font-mono whitespace-nowrap">{{ contextLabel }}</span>
+        </div>
+        <div class="px-2 py-[5px] border border-brand-200 rounded-md bg-brand-50 text-brand-600 font-medium text-[10px] font-mono max-md:hidden">{{ store.activeSession?.model || 'CoreCoder' }}</div>
+      </div>
     </header>
 
     <div ref="scrollArea" class="min-h-0 flex-1 overflow-y-auto smooth-scroll" @scroll="onScroll">
@@ -91,29 +99,32 @@
         <span>{{ store.notice }}</span><button class="border-0 bg-transparent cursor-pointer" type="button" @click="store.notice = ''">×</button>
       </div>
       <form class="composer-box px-4 py-[10px] pt-3 pr-[13px] pb-2.5 pl-4 border border-brand-300 rounded-[16px] bg-white shadow-[0_9px_28px_rgba(30,43,59,.09)]" @submit.prevent="handleSubmit">
-        <textarea
-          ref="textarea"
-          v-model="inputText"
-          rows="1"
-          class="w-full max-h-[180px] resize-none border-0 outline-0 bg-transparent text-brand-800 text-sm leading-[1.55] disabled:cursor-not-allowed placeholder:text-brand-400"
-          :placeholder="composerPlaceholder"
-          :disabled="inputDisabled"
-          @input="resizeTextarea"
-          @keydown.enter.exact.prevent="handleSubmit"
-        ></textarea>
-        <div class="flex items-center justify-between mt-[7px] max-md:justify-end">
+        <div class="flex items-start">
+          <textarea
+            ref="textarea"
+            v-model="inputText"
+            rows="1"
+            class="w-full max-h-[180px] resize-none border-0 outline-0 bg-transparent text-brand-800 text-sm leading-[1.55] disabled:cursor-not-allowed placeholder:text-brand-400"
+            :placeholder="composerPlaceholder"
+            :disabled="inputDisabled"
+            @input="resizeTextarea"
+            @keydown.enter.exact.prevent="handleSubmit"
+          ></textarea>
+        </div>
+        <div class="flex items-center gap-2 mt-[7px]">
+          <FilePickerDropdown @select="insertFileRef" />
           <span class="text-brand-400 font-medium text-[9px] font-mono max-md:hidden">{{ composerHint }}</span>
           <button
             v-if="store.isRunning"
             type="button"
-            class="stop-btn w-[31px] h-[31px] grid place-items-center border-0 rounded-[9px] text-white cursor-pointer disabled:cursor-not-allowed"
+            class="stop-btn ml-auto w-[31px] h-[31px] grid place-items-center border-0 rounded-[9px] text-white cursor-pointer disabled:cursor-not-allowed"
             :disabled="store.activeSession?.status === 'cancelling'"
             aria-label="停止任务"
             @click="cancelRun()"
           >
             <svg class="w-[17px] fill-none stroke-current" style="stroke-linecap:round;stroke-linejoin:round;stroke-width:1.8" viewBox="0 0 20 20"><rect x="4" y="4" width="12" height="12" rx="1" /></svg>
           </button>
-          <button v-else type="submit" class="w-[31px] h-[31px] grid place-items-center border-0 rounded-[9px] bg-brand-950 text-white cursor-pointer disabled:bg-brand-200 disabled:text-brand-400 disabled:cursor-default enabled:hover:bg-primary-500" :disabled="!inputText.trim() || inputDisabled" aria-label="发送消息">
+          <button v-else type="submit" class="ml-auto w-[31px] h-[31px] grid place-items-center border-0 rounded-[9px] bg-brand-950 text-white cursor-pointer disabled:bg-brand-200 disabled:text-brand-400 disabled:cursor-default enabled:hover:bg-primary-500" :disabled="!inputText.trim() || inputDisabled" aria-label="发送消息">
             <svg class="w-[17px] fill-none stroke-current" style="stroke-linecap:round;stroke-linejoin:round;stroke-width:1.8" viewBox="0 0 20 20"><path d="M10 15V5m0 0L6 9m4-4 4 4" /></svg>
           </button>
         </div>
@@ -129,6 +140,7 @@ import { useChatStore, type ToolCall } from '../stores/chatStore'
 import { useAgentStream } from '../composables/useAgentStream'
 import ToolCallCard from './ToolCallCard.vue'
 import MarkdownContent from './MarkdownContent.vue'
+import FilePickerDropdown from './FilePickerDropdown.vue'
 
 const store = useChatStore()
 const { sendMessage, cancelRun } = useAgentStream()
@@ -187,7 +199,51 @@ const composerHint = computed(() => {
   return 'Enter 发送 · Shift Enter 换行'
 })
 
+// Context bar
+const contextPercent = computed(() => {
+  if (!store.tokenStats) return null
+  return Math.min(100, Math.round(store.tokenStats.ratio * 100))
+})
+const contextBarClass = computed(() => {
+  const pct = contextPercent.value
+  if (pct === null) return ''
+  if (pct > 80) return 'bg-danger'
+  if (pct > 50) return 'bg-warning'
+  return 'bg-primary-400'
+})
+const contextLabel = computed(() => {
+  if (!store.tokenStats) return ''
+  const c = store.tokenStats.current
+  return c >= 1000 ? `${Math.round(c / 1000)}k` : `${c}`
+})
+const contextTooltip = computed(() => {
+  if (!store.tokenStats) return ''
+  return `约 ${store.tokenStats.current.toLocaleString()} / ${store.tokenStats.max.toLocaleString()} tokens`
+})
+
+// Compression notice
+watch(() => store.compressionNotice, (text) => {
+  if (!text) return
+  const msg = text
+  store.notice = msg
+  setTimeout(() => { if (store.notice === msg) store.notice = '' }, 4000)
+})
+
 function completedCount(tools: ToolCall[]) { return tools.filter(tool => tool.status === 'done').length }
+function insertFileRef(path: string) {
+  if (!textarea.value) return
+  const ref = `@${path} `
+  const start = textarea.value.selectionStart ?? inputText.value.length
+  const end = textarea.value.selectionEnd ?? inputText.value.length
+  inputText.value = inputText.value.slice(0, start) + ref + inputText.value.slice(end)
+  void nextTick(() => {
+    if (!textarea.value) return
+    const pos = start + ref.length
+    textarea.value.setSelectionRange(pos, pos)
+    textarea.value.focus()
+    resizeTextarea()
+  })
+}
 function useExample(value: string) { inputText.value = value; textarea.value?.focus(); resizeTextarea() }
 function resizeTextarea() {
   if (!textarea.value) return

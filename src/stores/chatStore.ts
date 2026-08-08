@@ -9,6 +9,7 @@ export interface SessionSummary {
   preview: string
   model: string
   status: SessionStatus
+  archived: boolean
   created_at: string
   updated_at: string
 }
@@ -52,9 +53,12 @@ export const useChatStore = defineStore('chat', () => {
   const pendingConfirm = ref<ConfirmEvent | null>(null)
   const pendingConfirmRestored = ref(false)
   const sidebarOpen = ref(false)
+  const searchQuery = ref('')
   const notice = ref('')
   const diffViewerOpen = ref(false)
   const diffViewerData = ref({ fileName: '', oldContent: '', newContent: '' })
+  const tokenStats = ref<{ current: number; max: number; ratio: number } | null>(null)
+  const compressionNotice = ref('')
 
   const activeSession = computed(() => sessions.value.find(item => item.id === activeSessionId.value) || null)
   const messages = computed(() => activeSessionId.value ? messagesBySession.value[activeSessionId.value] || [] : [])
@@ -93,10 +97,13 @@ export const useChatStore = defineStore('chat', () => {
     pendingConfirm,
     pendingConfirmRestored,
     sidebarOpen,
+    searchQuery,
     notice,
     isRunning,
     diffViewerOpen,
     diffViewerData,
+    tokenStats,
+    compressionNotice,
     setMessages,
     addMessage,
     updateSession,

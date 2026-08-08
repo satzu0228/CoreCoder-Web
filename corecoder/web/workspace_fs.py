@@ -79,6 +79,49 @@ def safe_read_dir(requested_path: str) -> tuple[bool, list[dict] | None, str]:
         return False, None, f"Error reading directory: {e}"
 
 
+def safe_read_dir_recursive(
+    requested_path: str = ".",
+    max_files: int = 5000,
+) -> tuple[bool, list[str] | None, str]:
+    """Walk directory recursively and return flat list of relative file paths.
+
+    Skips common large directories to avoid performance issues in big repos.
+    Returns (success, files, error_message).
+    """
+    _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build", ".next", "target", ".tox", ".eggs"}
+
+    is_valid, resolved, error = validate_path(requested_path)
+    if not is_valid:
+        return False, None, error
+
+    try:
+        if not resolved.is_dir():
+            return False, None, f"Not a directory: {requested_path}"
+
+        ws_root = get_workspace_root()
+        files: list[str] = []
+        for dirpath, dirnames, filenames in resolved.walk():
+            # Skip noise directories
+            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith(".")]
+            for fname in sorted(filenames):
+                fpath = dirpath / fname
+                try:
+                    rel = str(fpath.relative_to(ws_root))
+                    files.append(rel)
+                except ValueError:
+                    pass
+                if len(files) >= max_files:
+                    break
+            if len(files) >= max_files:
+                break
+        return True, files, ""
+
+    except PermissionError:
+        return False, None, f"Permission denied: {requested_path}"
+    except Exception as e:
+        return False, None, f"Error reading directory: {e}"
+
+
 def safe_read_file(requested_path: str, max_size: int = 1_000_000) -> tuple[bool, str | None, str]:
     """Safely read file contents (up to max_size).
 

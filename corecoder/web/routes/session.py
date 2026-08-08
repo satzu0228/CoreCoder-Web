@@ -1,11 +1,12 @@
-"""Workspace-scoped Web conversation APIs and legacy refresh adapters."""
+"""Workspace-scoped Web conversation APIs."""
 
 import json
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ..confirm_registry import registry
+
 
 router = APIRouter()
 
@@ -26,11 +27,15 @@ def _get_session(request: Request, session_id: str):
 
 
 @router.get("/api/sessions")
-async def list_sessions(request: Request) -> dict:
+async def list_sessions(
+    request: Request,
+    search: str = Query(default=None, description="Filter sessions by title or preview text"),
+    archived: bool = Query(default=False, description="Include archived sessions"),
+) -> dict:
     manager = _manager(request)
     return {
         "workspace": {"id": manager.workspace_id, "name": manager.workspace_name},
-        "sessions": manager.list(),
+        "sessions": manager.list(search=search, include_archived=archived),
         "running_session_id": manager.running_session_id,
     }
 
@@ -43,7 +48,11 @@ async def create_session(request: Request) -> dict:
 @router.get("/api/sessions/{session_id}")
 async def get_session(request: Request, session_id: str) -> dict:
     session = _get_session(request, session_id)
-    return {"session": session.summary(), "messages": serialize_messages(list(session.agent.messages))}
+    return {
+        "session": session.summary(),
+        "messages": serialize_messages(list(session.agent.messages)),
+        "token_stats": session.agent.token_stats(),
+    }
 
 
 @router.patch("/api/sessions/{session_id}")
@@ -67,40 +76,45 @@ async def delete_session(request: Request, session_id: str):
         raise HTTPException(status_code=409, detail="A running conversation cannot be deleted") from None
 
 
+class BatchDeleteRequest(BaseModel):
+    session_ids: list[str]
+
+
+@router.post("/api/sessions/{session_id}/archive")
+async def archive_session(request: Request, session_id: str) -> dict:
+    """Archive a session (soft-delete)."""
+    try:
+        session = _manager(request).archive(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+    except RuntimeError:
+        raise HTTPException(status_code=409, detail="A running conversation cannot be archived") from None
+    return {"session": session.summary()}
+
+
+@router.post("/api/sessions/{session_id}/unarchive")
+async def unarchive_session(request: Request, session_id: str) -> dict:
+    """Restore an archived session."""
+    try:
+        session = _manager(request).unarchive(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+    return {"session": session.summary()}
+
+
+@router.delete("/api/sessions", status_code=200)
+async def batch_delete_sessions(request: Request, body: BatchDeleteRequest) -> dict:
+    """Delete multiple sessions at once. Skips running sessions."""
+    deleted = _manager(request).batch_delete(body.session_ids)
+    return {"deleted": deleted}
+
+
 @router.get("/api/sessions/{session_id}/pending")
 async def get_session_pending(request: Request, session_id: str) -> dict:
     _get_session(request, session_id)
     manager = _manager(request)
     pending_data = registry.get_pending() if manager.running_session_id == session_id else None
     return {"pending": pending_data}
-
-
-@router.get("/api/session/pending")
-async def get_pending_confirm(request: Request) -> dict:
-    """Get current pending confirmation (if any) for page refresh recovery.
-
-    Returns:
-        {
-          "pending": {
-            "id": "...",
-            "action": "edit_file" | "bash",
-            "file_path": "...",  # if edit_file
-            "diff": "...",       # if edit_file
-            "command": "...",    # if bash
-            "reason": "...",     # if bash
-          }
-        }
-        or {"pending": None} if no pending confirmation.
-
-    When user refreshes the browser, the frontend calls this endpoint to check
-    if there's a pending confirmation that needs to be displayed. If so, the
-    ConfirmModal is shown with the full payload restored.
-
-    Note: Token validation is done by middleware; this endpoint assumes valid token.
-    """
-    pending_data = registry.get_pending()
-    return {"pending": pending_data}
-
 
 def _parse_arguments(raw_arguments) -> dict:
     if isinstance(raw_arguments, dict):
@@ -166,13 +180,3 @@ def serialize_messages(messages: list[dict]) -> list[dict]:
     return result
 
 
-@router.get("/api/session/messages")
-async def get_session_messages(request: Request) -> dict:
-    """Return a stable UI DTO, not the Agent's provider-specific message list."""
-    session = _manager(request).ensure_default()
-    messages = list(session.agent.messages)
-    return {
-        "messages": serialize_messages(messages),
-        "running": bool(request.app.state.agent_running) or session.status in {"running", "waiting_confirmation"},
-        "session_id": session.id,
-    }

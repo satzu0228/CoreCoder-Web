@@ -52,6 +52,7 @@ class WebSession:
     updated_at: str
     status: str
     agent: Agent
+    archived: bool = False
 
     def summary(self) -> dict:
         preview = ""
@@ -65,6 +66,7 @@ class WebSession:
             "preview": preview,
             "model": self.model,
             "status": self.status,
+            "archived": self.archived,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -176,6 +178,7 @@ class WebSessionManager:
                     "preview": preview,
                     "model": str(data.get("model") or "unknown"),
                     "status": str(data.get("status", "idle")),
+                    "archived": bool(data.get("archived", False)),
                     "created_at": str(data.get("created_at") or _now()),
                     "updated_at": str(data.get("updated_at") or _now()),
                 }
@@ -214,6 +217,7 @@ class WebSessionManager:
             "preview": preview,
             "model": session.model,
             "status": session.status,
+            "archived": session.archived,
             "created_at": session.created_at,
             "updated_at": session.updated_at,
         }
@@ -259,6 +263,7 @@ class WebSessionManager:
                     created_at=str(entry.get("created_at") or _now()),
                     updated_at=str(entry.get("updated_at") or _now()),
                     status=str(entry.get("status", "idle")),
+                    archived=bool(entry.get("archived", False)),
                     agent=agent,
                 )
             return
@@ -286,6 +291,7 @@ class WebSessionManager:
                     created_at=str(data.get("created_at") or _now()),
                     updated_at=str(data.get("updated_at") or _now()),
                     status=status,
+                    archived=bool(data.get("archived", False)),
                     agent=agent,
                 )
                 if status == "interrupted":
@@ -327,6 +333,7 @@ class WebSessionManager:
             "created_at": session.created_at,
             "updated_at": session.updated_at,
             "status": session.status,
+            "archived": session.archived,
             "messages": messages,
         }
         json_text = json.dumps(data, ensure_ascii=False, indent=2)
@@ -340,10 +347,56 @@ class WebSessionManager:
         # --- index ---
         self._update_index_entry(session)
 
-    def list(self) -> list[dict]:
+    def list(self, search: str | None = None, include_archived: bool = False) -> list[dict]:
         with self._lock:
             sessions = sorted(self._sessions.values(), key=lambda item: item.updated_at, reverse=True)
-            return [session.summary() for session in sessions]
+            if not include_archived:
+                sessions = [s for s in sessions if not s.archived]
+            summaries = [session.summary() for session in sessions]
+            if search:
+                q = search.lower()
+                summaries = [
+                    s for s in summaries
+                    if q in s["title"].lower() or q in s.get("preview", "").lower()
+                ]
+            return summaries
+
+    def archive(self, session_id: str) -> WebSession:
+        with self._lock:
+            session = self.get(session_id)
+            if self.running_session_id == session_id:
+                raise RuntimeError("running session cannot be archived")
+            session.archived = True
+            session.updated_at = _now()
+            self._persist(session)
+            return session
+
+    def unarchive(self, session_id: str) -> WebSession:
+        with self._lock:
+            session = self.get(session_id)
+            session.archived = False
+            session.updated_at = _now()
+            self._persist(session)
+            return session
+
+    def batch_delete(self, session_ids: list[str]) -> int:
+        deleted = 0
+        with self._lock:
+            for sid in session_ids:
+                if self.running_session_id == sid:
+                    continue
+                try:
+                    session = self.get(sid)
+                    self._sessions.pop(session.id)
+                    if self.session_dir is not None:
+                        path = self._path(session.id)
+                        if path.exists():
+                            path.unlink()
+                        self._remove_index_entry(sid)
+                    deleted += 1
+                except KeyError:
+                    continue
+        return deleted
 
     def create(self) -> WebSession:
         with self._lock:

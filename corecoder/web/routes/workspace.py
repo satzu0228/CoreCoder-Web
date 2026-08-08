@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-from ..workspace_fs import safe_read_dir, safe_read_file
+from ..workspace_fs import safe_read_dir, safe_read_dir_recursive, safe_read_file
 
 router = APIRouter()
 
@@ -22,6 +22,22 @@ async def get_tree(path: str = Query(default=".")) -> JSONResponse:
     if not success:
         return JSONResponse({"error": error}, status_code=400)
     return JSONResponse({"entries": entries})
+
+
+@router.get("/api/files")
+async def get_files(path: str = Query(default=".")) -> JSONResponse:
+    """List all files recursively (for autocomplete / file picker).
+
+    Query params:
+    - path: directory path relative to workspace (default ".")
+
+    Returns {files: ["path/to/file", ...]} on success.
+    Returns {error: "..."} on failure.
+    """
+    success, files, error = safe_read_dir_recursive(path)
+    if not success:
+        return JSONResponse({"error": error}, status_code=400)
+    return JSONResponse({"files": files})
 
 
 @router.get("/api/file")

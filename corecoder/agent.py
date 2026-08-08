@@ -59,6 +59,14 @@ class Agent:
         self.messages.append({"role": "user", "content": user_input})
         self.context.maybe_compress(self.messages, self.llm)
 
+        # Emit context info so the Web UI can show token usage
+        from .context import estimate_tokens
+        events.emit("context_info", {
+            "type": "context_info",
+            "token_estimate": estimate_tokens(self.messages),
+            "max_tokens": self.context.max_tokens,
+        })
+
         for _ in range(self.max_rounds):
             chat_kwargs = {
                 "messages": self._full_messages(),
@@ -184,6 +192,16 @@ class Agent:
                     "tool_call_id": tc.id,
                     "content": "[interrupted]",
                 })
+
+    def token_stats(self) -> dict:
+        """Return approximate token usage for the current conversation."""
+        from .context import estimate_tokens
+        current = estimate_tokens(self.messages)
+        return {
+            "current": current,
+            "max": self.context.max_tokens,
+            "ratio": round(current / self.context.max_tokens, 3) if self.context.max_tokens else 0,
+        }
 
     def reset(self):
         """Clear conversation history."""
