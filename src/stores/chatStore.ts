@@ -31,6 +31,7 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<Message[]>([])
   const token = ref<string>('')
   const pendingConfirm = ref<ConfirmEvent | null>(null)
+  const pendingConfirmRestored = ref(false)
   const toolCalls = ref<Map<string, ToolCall>>(new Map())
   const diffViewerOpen = ref(false)
   const diffViewerData = ref({
@@ -62,6 +63,17 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = []
     toolCalls.value.clear()
     pendingConfirm.value = null
+    pendingConfirmRestored.value = false
+  }
+
+  const restoreMessages = (restored: Message[]) => {
+    messages.value = restored
+    toolCalls.value.clear()
+    for (const message of restored) {
+      for (const toolCall of message.toolCalls || []) {
+        toolCalls.value.set(toolCall.id, toolCall)
+      }
+    }
   }
 
   const openDiffViewer = (fileName: string, oldContent: string, newContent: string) => {
@@ -79,6 +91,7 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     token,
     pendingConfirm,
+    pendingConfirmRestored,
     toolCalls,
     diffViewerOpen,
     diffViewerData,
@@ -86,6 +99,7 @@ export const useChatStore = defineStore('chat', () => {
     updateToolCall,
     createToolCall,
     resetMessages,
+    restoreMessages,
     openDiffViewer,
     closeDiffViewer,
     messageCount,

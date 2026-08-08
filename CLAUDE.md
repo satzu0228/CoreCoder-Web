@@ -13,7 +13,7 @@ CoreCoder-Web 是对开源项目 [CoreCoder](https://github.com/he-yufeng/CoreCo
 
 ## 当前状态
 
-MVP 的 Web 核心闭环已经落地：`corecoder/web/`、Vue3 前端、SSE 工具事件、文件树、Monaco Diff 和确认流程均存在。2026-08-08 完成了一轮集成修复，包括 CLI `edit_file` 兼容、通用 `request_confirmation()`、并行确认串行化、Web 文件工具路径约束、`write_file` 确认以及前端 CI/发布构建。
+MVP 的 Web 核心闭环和 v2 P0 体验修复已经落地：`corecoder/web/`、Vue3 前端、SSE 工具事件、虚拟文件树、按需 Monaco Diff、刷新恢复和确认流程均存在。2026-08-08 完成了 CLI 兼容、通用确认、并行确认串行化、Web 文件路径约束、前端发布构建，以及对话恢复/Monaco 瘦身/文件树虚拟化。
 
 当前阶段是体验和可靠性优化，不再是设计阶段。判断实现状态时以代码、测试和 `docs/开发日志.md` 为准；`docs/MVP 需求文档.md` 保留设计意图，允许开发日志记录经过验证的实现偏差。
 

@@ -6,7 +6,7 @@ A human-in-the-loop Web coding agent, built by extending [CoreCoder](https://git
 
 ## Status
 
-✅ **The core MVP loop is complete; experience work continues.** The FastAPI/SSE layer, Vue 3 frontend, tool timeline, file tree, Monaco diff viewer, and approval flows for `edit_file`, `write_file`, and dangerous `bash` commands are implemented. A 2026-08-08 hardening pass fixed CLI compatibility, serialized concurrent confirmations, enforced Web workspace paths for file tools, and completed the frontend release pipeline. See [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>) and [`docs/开发日志.md`](<docs/开发日志.md>).
+✅ **The core MVP loop and P0 experience fixes are complete.** The FastAPI/SSE layer, Vue 3 frontend, virtualized file tree, lazy Monaco diff viewer, and approval flows for `edit_file`, `write_file`, and dangerous `bash` commands are implemented. A refresh restores the current process's conversation, tool states, and pending confirmation. See [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>) and [`docs/开发日志.md`](<docs/开发日志.md>).
 
 ## What this is
 

@@ -366,3 +366,60 @@ def test_web_file_tool_rejects_path_outside_workspace(tmp_path, monkeypatch):
         assert "outside workspace" in result
     finally:
         events.clear_emitter()
+
+
+def test_session_messages_returns_ui_dto_with_completed_tool_calls():
+    agent = Agent(llm=ScriptedLLM([]), tools=[])
+    agent.messages = [
+        {"role": "user", "content": "inspect"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": '{"file_path":"README.md"}'},
+            }],
+        },
+        {"role": "tool", "tool_call_id": "call-1", "content": "1\t# CoreCoder"},
+        {"role": "assistant", "content": "Done."},
+    ]
+    client = TestClient(create_app(agent, TOKEN))
+
+    resp = client.get("/api/session/messages", headers={"X-CoreCoder-Token": TOKEN})
+
+    assert resp.status_code == 200
+    assert resp.json()["running"] is False
+    messages = resp.json()["messages"]
+    assert [message["role"] for message in messages] == ["user", "assistant"]
+    assert messages[1]["content"] == "Done."
+    assert messages[1]["toolCalls"] == [{
+        "id": "call-1",
+        "name": "read_file",
+        "args": {"file_path": "README.md"},
+        "status": "done",
+        "result": "1\t# CoreCoder",
+    }]
+
+
+def test_session_messages_marks_unanswered_tool_call_running():
+    agent = Agent(llm=ScriptedLLM([]), tools=[])
+    agent.messages = [{
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": "pending",
+            "type": "function",
+            "function": {"name": "edit_file", "arguments": "not-json"},
+        }],
+    }]
+    app = create_app(agent, TOKEN)
+    app.state.agent_running = True
+
+    resp = TestClient(app).get("/api/session/messages", headers={"X-CoreCoder-Token": TOKEN})
+
+    assert resp.status_code == 200
+    assert resp.json()["running"] is True
+    tool_call = resp.json()["messages"][0]["toolCalls"][0]
+    assert tool_call["status"] == "running"
+    assert tool_call["args"] == {"raw": "not-json"}

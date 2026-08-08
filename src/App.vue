@@ -24,7 +24,7 @@ import DiffViewerModal from './components/DiffViewerModal.vue'
 import './style.css'
 
 const store = useChatStore()
-const { checkPendingConfirm } = useAgentStream()
+const { checkPendingConfirm, restoreSessionMessages } = useAgentStream()
 
 const onFileSelected = (file: { path: string; content: string }) => {
   // 点击文件树的文件时，可以在这里处理预览逻辑
@@ -46,7 +46,8 @@ onMounted(async () => {
     history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`)
   }
 
-  // Check for any pending confirmation to restore after page reload
+  await restoreSessionMessages()
+  // Check for any pending confirmation to restore after page reload.
   await checkPendingConfirm()
 })
 </script>

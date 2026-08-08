@@ -6,7 +6,8 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { languageForFile, loadMonaco } from '../lib/monaco'
 
 interface Props {
   oldContent: string
@@ -18,12 +19,13 @@ const props = defineProps<Props>()
 
 const editorContainer = ref<HTMLElement | null>(null)
 const loading = ref(true)
-let editor: any = null
+let editor: import('monaco-editor/esm/vs/editor/editor.api').editor.IStandaloneDiffEditor | null = null
+let originalModel: import('monaco-editor/esm/vs/editor/editor.api').editor.ITextModel | null = null
+let modifiedModel: import('monaco-editor/esm/vs/editor/editor.api').editor.ITextModel | null = null
 
 onMounted(async () => {
   try {
-    // Dynamically import Monaco Editor only when needed
-    const monaco = await import('monaco-editor')
+    const monaco = await loadMonaco()
 
     loading.value = false
     await nextTick()
@@ -37,14 +39,20 @@ onMounted(async () => {
       minimap: { enabled: true }
     })
 
-    editor.setModel({
-      original: monaco.editor.createModel(props.oldContent, 'text/plain'),
-      modified: monaco.editor.createModel(props.newContent, 'text/plain')
-    })
+    const language = languageForFile(props.fileName)
+    originalModel = monaco.editor.createModel(props.oldContent, language)
+    modifiedModel = monaco.editor.createModel(props.newContent, language)
+    editor.setModel({ original: originalModel, modified: modifiedModel })
   } catch (error) {
     console.error('Failed to load Monaco Editor:', error)
     loading.value = false
   }
+})
+
+onUnmounted(() => {
+  editor?.dispose()
+  originalModel?.dispose()
+  modifiedModel?.dispose()
 })
 </script>
 

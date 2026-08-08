@@ -59,11 +59,13 @@ async def chat(req: ChatRequest, request: Request):
 
     def worker():
         set_emitter(push)
+        request.app.state.agent_running = True
         try:
             agent.chat(req.message, on_token=on_token, on_tool=on_tool)
         except Exception as e:
             events.put({"type": "error", "message": str(e)})
         finally:
+            request.app.state.agent_running = False
             clear_emitter()
             events.put(_DONE)
 

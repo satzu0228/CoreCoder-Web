@@ -1,18 +1,45 @@
 import { useChatStore } from '../stores/chatStore'
-import type { ConfirmEvent } from '../stores/chatStore'
+import type { ConfirmEvent, Message } from '../stores/chatStore'
 
 export function useAgentStream() {
   const store = useChatStore()
 
+  async function restoreSessionMessages(): Promise<boolean> {
+    if (!store.token) return false
+    try {
+      const resp = await fetch('/api/session/messages', {
+        headers: { 'X-CoreCoder-Token': store.token },
+      })
+      if (!resp.ok) return false
+      const data = await resp.json()
+      store.restoreMessages((data.messages || []) as Message[])
+      return Boolean(data.running)
+    } catch (err) {
+      console.error('Failed to restore session messages:', err)
+      return false
+    }
+  }
+
+  async function followRestoredRun() {
+    for (let attempt = 0; attempt < 75; attempt += 1) {
+      const running = await restoreSessionMessages()
+      if (!running) return
+      await new Promise(resolve => setTimeout(resolve, 400))
+    }
+  }
+
   async function checkPendingConfirm() {
     // Query server for any pending confirmation to restore after page reload.
     try {
-      const resp = await fetch(`/api/session/pending?token=${store.token}`)
+      const resp = await fetch('/api/session/pending', {
+        headers: { 'X-CoreCoder-Token': store.token },
+      })
       if (!resp.ok) return
 
       const data = await resp.json()
       if (data.pending) {
         store.pendingConfirm = data.pending as ConfirmEvent
+        store.pendingConfirmRestored = true
       }
     } catch (err) {
       console.error('Failed to check pending confirm:', err)
@@ -100,6 +127,7 @@ export function useAgentStream() {
             }
           } else if (evt.type === 'confirm_required') {
             store.pendingConfirm = evt as ConfirmEvent
+            store.pendingConfirmRestored = false
           } else if (evt.type === 'error') {
             assistantContent += `\n[error] ${evt.message}`
           } else if (evt.type === 'done') {
@@ -122,6 +150,7 @@ export function useAgentStream() {
 
   async function submitConfirm(approve: boolean) {
     if (!store.pendingConfirm?.id) return
+    const shouldFollowRestoredRun = store.pendingConfirmRestored
 
     const resp = await fetch('/api/confirm', {
       method: 'POST',
@@ -134,6 +163,8 @@ export function useAgentStream() {
 
     if (resp.ok) {
       store.pendingConfirm = null
+      store.pendingConfirmRestored = false
+      if (shouldFollowRestoredRun) void followRestoredRun()
     } else {
       console.error('Confirm request failed:', resp.status)
     }
@@ -143,5 +174,6 @@ export function useAgentStream() {
     sendMessage,
     submitConfirm,
     checkPendingConfirm,
+    restoreSessionMessages,
   }
 }

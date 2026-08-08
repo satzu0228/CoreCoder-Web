@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-✅ **MVP 核心闭环已完成，正在做体验优化。** FastAPI/SSE Web 层、Vue3 前端、工具时间线、文件树、Monaco Diff，以及 `edit_file`/`write_file`/危险 `bash` 的人工确认均已落地。2026-08-08 完成了 CLI 兼容、并行确认串行化、workspace 文件路径约束和前端发布链路的集成修复。完整设计与实际变更见 [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>)、[`docs/开发日志.md`](<docs/开发日志.md>)。
+✅ **MVP 核心闭环和 P0 体验修复已完成。** FastAPI/SSE Web 层、Vue3 前端、工具时间线、虚拟文件树、按需加载的 Monaco Diff，以及 `edit_file`/`write_file`/危险 `bash` 的人工确认均已落地；刷新页面可以恢复当前进程内的对话、工具状态和挂起确认。完整设计与实际变更见 [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>)、[`docs/开发日志.md`](<docs/开发日志.md>)。
 
 ## 这是什么
 

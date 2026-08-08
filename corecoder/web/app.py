@@ -24,6 +24,7 @@ def create_app(agent: Agent, token: str) -> FastAPI:
     app = FastAPI(title="CoreCoder Web")
     app.state.agent = agent
     app.state.token = token
+    app.state.agent_running = False
 
     @app.middleware("http")
     async def check_token(request: Request, call_next):

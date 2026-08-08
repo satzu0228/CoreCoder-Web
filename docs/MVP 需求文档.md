@@ -291,6 +291,7 @@ POST /api/confirm         body: {id, approve: bool}
                           若 id 已超时或不存在（ConfirmRegistry.resolve 返回 False），
                           返回明确的 4xx 错误，而不是静默忽略
 GET  /api/session/pending    刷新页面后恢复挂起的确认状态
+GET  /api/session/messages   刷新页面后恢复当前进程内的对话与工具状态
 
 GET  /api/tree             文件树
 GET  /api/file?path=xxx    文件内容
