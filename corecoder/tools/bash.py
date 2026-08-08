@@ -13,13 +13,13 @@ import subprocess
 import threading
 from .base import Tool
 
-# Import confirmation helpers; only used if events._sse_emit is initialized (Web mode)
+# Import confirmation helpers; only used when a Web SSE emitter is active.
 try:
-    from ..web._confirmable import request_bash_confirmation
+    from ..web._confirmable import request_confirmation
     from ..web.confirm_registry import ConfirmResult
     from ..web import events as web_events
 except ImportError:
-    request_bash_confirmation = None
+    request_confirmation = None
     ConfirmResult = None
     web_events = None
 
@@ -72,9 +72,12 @@ class BashTool(Tool):
         warning = _check_dangerous(command)
         if warning:
             # Web mode: request user confirmation; CLI mode: direct reject
-            if web_events and web_events._sse_emit is not None:
+            if web_events and web_events.has_emitter():
                 # Web mode: emit confirmation request and wait for user response
-                result = request_bash_confirmation(command, warning)
+                result = request_confirmation(
+                    "bash",
+                    {"command": command, "reason": warning},
+                )
 
                 if result == ConfirmResult.APPROVED:
                     # User approved; continue to execute the command below

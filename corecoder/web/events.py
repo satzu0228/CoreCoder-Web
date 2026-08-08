@@ -24,6 +24,11 @@ def clear_emitter() -> None:
     _sse_emit = None
 
 
+def has_emitter() -> bool:
+    """Return whether a Web SSE request is currently receiving tool events."""
+    return _sse_emit is not None
+
+
 def emit(event_type: str, data: dict) -> None:
     """Push an event. No-op if no emitter is registered."""
     if _sse_emit:

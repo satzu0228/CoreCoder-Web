@@ -3,7 +3,7 @@
 Handles queries for pending confirmations (used to restore UI after page refresh).
 """
 
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query
 from ..confirm_registry import registry
 
 router = APIRouter()

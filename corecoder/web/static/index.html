@@ -79,7 +79,15 @@
   </div>
 
   <script>
-    const token = new URLSearchParams(location.search).get("token") || "";
+    const params = new URLSearchParams(location.search);
+    const urlToken = params.get("token");
+    const token = urlToken || sessionStorage.getItem("corecoder-token") || "";
+    if (urlToken) {
+      sessionStorage.setItem("corecoder-token", urlToken);
+      params.delete("token");
+      const query = params.toString();
+      history.replaceState(null, "", `${location.pathname}${query ? `?${query}` : ""}${location.hash}`);
+    }
     const log   = document.getElementById("log");
     const form  = document.getElementById("form");
     const input = document.getElementById("input");
@@ -159,10 +167,14 @@
       const title = document.getElementById("confirmTitle");
       const content = document.getElementById("confirmContent");
 
-      title.textContent = evt.action === "edit_file" ? "Confirm Edit" : "Confirm Command";
+      title.textContent = evt.action === "edit_file"
+        ? "Confirm Edit"
+        : evt.action === "write_file"
+          ? "Confirm Write"
+          : "Confirm Command";
 
       content.innerHTML = "";
-      if (evt.action === "edit_file") {
+      if (evt.action === "edit_file" || evt.action === "write_file") {
         const fileEl = document.createElement("div");
         fileEl.innerHTML = `<strong>File:</strong> <code>${escHtml(evt.file_path)}</code>`;
         content.appendChild(fileEl);

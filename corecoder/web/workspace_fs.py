@@ -1,12 +1,19 @@
 """Workspace filesystem utilities: path safety validation."""
 
-import os
 from pathlib import Path
 
 
 def get_workspace_root() -> Path:
     """Get the current workspace root (where the agent was started)."""
-    return Path.cwd()
+    return Path.cwd().resolve()
+
+
+def resolve_tool_path(requested_path: str, *, restrict_to_workspace: bool) -> tuple[Path | None, str]:
+    """Resolve a tool path and optionally enforce the Web workspace boundary."""
+    if not restrict_to_workspace:
+        return Path(requested_path).expanduser().resolve(), ""
+    valid, resolved, error = validate_path(requested_path)
+    return (resolved, "") if valid else (None, error)
 
 
 def validate_path(requested_path: str) -> tuple[bool, Path | None, str]:

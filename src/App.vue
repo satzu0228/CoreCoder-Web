@@ -35,8 +35,16 @@ const onFileSelected = (file: { path: string; content: string }) => {
 onMounted(async () => {
   // Extract token from URL query params
   const params = new URLSearchParams(location.search)
-  const token = params.get('token') || ''
+  const urlToken = params.get('token')
+  const token = urlToken || sessionStorage.getItem('corecoder-token') || ''
   store.token = token
+  if (urlToken) sessionStorage.setItem('corecoder-token', urlToken)
+  // Keep the capability token out of copied URLs, browser history, and referrers.
+  if (params.has('token')) {
+    params.delete('token')
+    const query = params.toString()
+    history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`)
+  }
 
   // Check for any pending confirmation to restore after page reload
   await checkPendingConfirm()

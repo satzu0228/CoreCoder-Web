@@ -18,7 +18,7 @@ export interface ToolCall {
 
 export interface ConfirmEvent {
   id: string
-  action: 'edit_file' | 'bash'
+  action: 'edit_file' | 'write_file' | 'bash'
   file_path?: string
   command?: string
   reason?: string
@@ -41,7 +41,7 @@ export const useChatStore = defineStore('chat', () => {
 
   const addMessage = (role: 'user' | 'assistant', content: string) => {
     messages.value.push({
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       role,
       content,
     })

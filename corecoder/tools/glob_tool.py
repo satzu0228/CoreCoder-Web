@@ -1,6 +1,7 @@
 """File pattern matching."""
 
-from pathlib import Path
+from ..web import events
+from ..web.workspace_fs import resolve_tool_path
 from .base import Tool
 
 
@@ -27,7 +28,9 @@ class GlobTool(Tool):
 
     def execute(self, pattern: str, path: str = ".") -> str:
         try:
-            base = Path(path).expanduser().resolve()
+            base, path_error = resolve_tool_path(path, restrict_to_workspace=events.has_emitter())
+            if base is None:
+                return f"Error: {path_error}"
             if not base.is_dir():
                 return f"Error: {path} is not a directory"
 

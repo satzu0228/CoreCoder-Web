@@ -45,7 +45,10 @@ def create_app(agent: Agent, token: str) -> FastAPI:
 
     @app.get("/")
     async def index():
-        return FileResponse(_DIST_DIR / "index.html")
+        # Source checkouts remain usable before the Vue build; release builds
+        # include dist/ and therefore serve the full frontend.
+        built_index = _DIST_DIR / "index.html"
+        return FileResponse(built_index if built_index.exists() else _STATIC_DIR / "index.html")
 
     app.include_router(chat_router)
     app.include_router(confirm_router)

@@ -7,7 +7,7 @@
       </div>
 
       <div class="modal-content">
-        <div v-if="store.pendingConfirm.action === 'edit_file'">
+        <div v-if="store.pendingConfirm.action === 'edit_file' || store.pendingConfirm.action === 'write_file'">
           <p class="label">File:</p>
           <code class="path">{{ store.pendingConfirm.file_path }}</code>
           <p class="label" style="margin-top: 12px">Changes:</p>
@@ -52,6 +52,7 @@ const isSubmitting = ref(false)
 
 const title = computed(() => {
   if (store.pendingConfirm?.action === 'edit_file') return 'Confirm Edit'
+  if (store.pendingConfirm?.action === 'write_file') return 'Confirm Write'
   if (store.pendingConfirm?.action === 'bash') return 'Confirm Command'
   return 'Confirm Action'
 })

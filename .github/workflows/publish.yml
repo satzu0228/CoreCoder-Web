@@ -17,6 +17,17 @@ jobs:
         with:
           python-version: "3.13"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build frontend
+        run: |
+          npm ci
+          npm run type-check
+          npm run build
+
       - name: Install build tools
         run: python -m pip install -U pip build twine
 

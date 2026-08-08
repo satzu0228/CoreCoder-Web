@@ -1,6 +1,7 @@
 """File reading with line numbers."""
 
-from pathlib import Path
+from ..web import events
+from ..web.workspace_fs import resolve_tool_path
 from .base import Tool
 
 
@@ -31,7 +32,9 @@ class ReadFileTool(Tool):
 
     def execute(self, file_path: str, offset: int = 1, limit: int = 2000) -> str:
         try:
-            p = Path(file_path).expanduser().resolve()
+            p, path_error = resolve_tool_path(file_path, restrict_to_workspace=events.has_emitter())
+            if p is None:
+                return f"Error: {path_error}"
             if not p.exists():
                 return f"Error: {file_path} not found"
             if not p.is_file():

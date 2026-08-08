@@ -6,14 +6,14 @@ A human-in-the-loop Web coding agent, built by extending [CoreCoder](https://git
 
 ## Status
 
-🚧 **Design finalized, implementation in progress.** The code in [`corecoder/`](corecoder/) is currently CoreCoder's unmodified engine (agent loop, tool base classes, LLM client, three-tier context compaction). The Web layer, tool-level confirmation flow, and FastAPI/Vue frontend described below are the active build. Full design: [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>).
+✅ **The core MVP loop is complete; experience work continues.** The FastAPI/SSE layer, Vue 3 frontend, tool timeline, file tree, Monaco diff viewer, and approval flows for `edit_file`, `write_file`, and dangerous `bash` commands are implemented. A 2026-08-08 hardening pass fixed CLI compatibility, serialized concurrent confirmations, enforced Web workspace paths for file tools, and completed the frontend release pipeline. See [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>) and [`docs/开发日志.md`](<docs/开发日志.md>).
 
 ## What this is
 
 This project builds on [CoreCoder](https://github.com/he-yufeng/CoreCoder)'s agent runtime (a ~1,000-line minimal coding agent — the agent loop, LLM client, and tool base classes are reused as-is) and adds two things on top:
 
 1. **Turning a terminal loop into a Web-native one** — SSE event streaming, workspace binding, real-time visualization of what the agent is doing, not just request/response chat.
-2. **A human-in-the-loop execution model inside the agent core** — `edit_file` and `bash` stop running silently. They compute a diff or flag a command, pause mid-execution, and wait for explicit user approval before anything actually happens.
+2. **A human-in-the-loop execution model in the tool layer** — in Web mode, `edit_file` and `write_file` show a diff before writing, while dangerous `bash` commands pause for approval. CLI edit behavior remains compatible with upstream.
 
 (2) is where the engineering weight is, and where most of the design effort goes.
 
@@ -27,10 +27,10 @@ Vue3 + TS + Naive UI + Monaco
    ┌────────┴────────┐
 Agent Runtime      Session (in-memory state machine)
    │
-   ├─ unchanged tools: read_file / write_file / grep / glob
-   └─ extended tools (same classes, added a confirmation stage):
-        ├─ edit_file  — diff computed → confirm_required event → wait → write
-        └─ bash       — blacklist hit pauses and asks, instead of silently rejecting
+   ├─ Web path boundary: read_file / grep / glob
+   └─ approval flows:
+        ├─ edit_file / write_file — diff → confirm_required → wait → write
+        └─ bash                   — dangerous-pattern hit pauses and asks
 ```
 
 Two loops, kept deliberately separate:
@@ -42,17 +42,17 @@ Two loops, kept deliberately separate:
 
 CoreCoder's tool execution is synchronous: `tool.execute()` returns a string and the loop immediately asks the model what's next. Inserting a "wait for a human" step into that, without rewriting the agent loop itself, comes down to three pieces:
 
-- **A module-level event bus** (`events.emit`) as the single channel for `tool_start` / `tool_end` / `confirm_required`. `server.py` wires SSE once; every event type flows through the same entry point.
+- **A module-level event bus** (`events.emit`) for `tool_end` and `confirm_required`; the `tool_start` callback enters the same SSE queue.
 - **`ConfirmRegistry`** — a locked `event_id → threading.Event` map. A tool calls `create()`, emits `confirm_required`, then blocks on `wait()`; `POST /api/confirm` calls `resolve()` to release it. Timeout cleanup and normal resolution share the same lock, so the internal event/result dicts never drift out of sync.
 - **A distinct error path for rejection** — a user declining an edit is neither a parameter error nor an execution failure. It has to read as its own outcome so the model renegotiates the plan instead of blindly retrying the same tool call.
 
-`EditFileTool` computes its diff *before* writing and only writes after approval. `BashTool`'s blacklist hit changes from a silent reject to the same pause-and-ask flow — but only for blacklisted commands; ordinary commands (`npm test`) never interrupt the run.
+`EditFileTool` and `WriteFileTool` compute a diff before writing. Concurrent approval requests are serialized so the single MVP modal cannot overwrite one request with another. `BashTool` only pauses on dangerous patterns; ordinary commands such as `npm test` run normally.
 
 ## Tech stack
 
 | Layer | Choice |
 |---|---|
-| Agent runtime | CoreCoder, unmodified (`agent.py` / `llm.py` / `context.py`) |
+| Agent runtime | CoreCoder loop reused; `agent.py` only adds tool-end events, while `llm.py` and `context.py` remain unchanged |
 | Backend | FastAPI + Server-Sent Events |
 | Frontend | Vue 3 + TypeScript + Naive UI + Monaco Editor |
 | Confirmation state | in-process `threading.Event`, single-user / single-workspace scope for the MVP |
@@ -64,7 +64,20 @@ CoreCoder's tool execution is synchronous: `tool.execute()` returns a string and
 | M1 | `corecoder web` boots, browser opens, SSE token streaming works |
 | M2 | File tree + tool-call timeline; event bus and `tool_end` wired for both the single and parallel tool-execution paths |
 | M3 | `edit_file` confirmation flow + Monaco diff viewer |
-| M4 | `bash` confirmation flow; shared `ConfirmableTool` abstraction extracted from the two real implementations; pending-confirmation state survives a page refresh |
+| M4 | `bash` confirmation flow; shared `request_confirmation()` helper; pending-confirmation state survives a page refresh |
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+npm ci
+npm run type-check
+npm run build
+python -m pytest tests/ -q
+ruff check corecoder tests
+```
+
+`corecoder web` binds the current directory as its workspace. A source checkout without a Vue build falls back to the compact frontend; CI and release workflows build Vue and package `static/dist` into the wheel.
 
 ## License
 

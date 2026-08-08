@@ -3,8 +3,6 @@
 @tailwind utilities;
 
 /* Naive UI theme override */
-@import '@naiveui/fonts/index.css';
-
 :root {
   --n-color: #ffffff;
   --n-color-target: #f5f5f5;

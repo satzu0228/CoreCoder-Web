@@ -12,11 +12,12 @@ from execution errors, so the LLM can understand the difference.
 """
 
 import difflib
-from pathlib import Path
 
-from .base import Tool
-from ..web.confirm_registry import registry, ConfirmResult
 from ..web import events
+from ..web._confirmable import request_confirmation
+from ..web.confirm_registry import ConfirmResult
+from ..web.workspace_fs import resolve_tool_path
+from .base import Tool
 
 # track files changed this session for /diff
 _changed_files: set[str] = set()
@@ -50,7 +51,9 @@ class EditFileTool(Tool):
 
     def execute(self, file_path: str, old_string: str, new_string: str) -> str:
         try:
-            p = Path(file_path).expanduser().resolve()
+            p, path_error = resolve_tool_path(file_path, restrict_to_workspace=events.has_emitter())
+            if p is None:
+                return f"Error: {path_error}"
             if not p.exists():
                 return f"Error: {file_path} not found"
 
@@ -80,16 +83,19 @@ class EditFileTool(Tool):
             # Pass full old/new content so the frontend can render a proper
             # side-by-side diff with surrounding context, not just +/- lines.
             payload = {
-                "action": "edit_file",
                 "file_path": file_path,
                 "diff": diff,
                 "old_content": content,
                 "new_content": new_content,
             }
-            event_id = registry.create(payload=payload)
-            # Emit to frontend with id included
-            events.emit("confirm_required", {"id": event_id, **payload})
-            result = registry.wait(event_id, timeout=300)
+            # CLI keeps CoreCoder's original immediate-edit behaviour. Only a
+            # live Web stream can display and resolve a confirmation request.
+            if not events.has_emitter():
+                p.write_text(new_content, encoding="utf-8")
+                _changed_files.add(str(p))
+                return f"Edited {file_path}\n{diff}"
+
+            result = request_confirmation("edit_file", payload)
 
             if result == ConfirmResult.APPROVED:
                 # User approved; write the file

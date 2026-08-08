@@ -4,6 +4,8 @@ Uses ScriptedLLM so no real API key or network call is needed.
 """
 
 import json
+import threading
+import time
 
 from fastapi.testclient import TestClient
 
@@ -242,3 +244,125 @@ def test_get_session_pending_returns_payload_when_waiting():
     # Clean up: wait for the resolver thread
     thread.join(timeout=2)
 
+
+def test_web_edit_waits_for_approval_before_writing(tmp_path, monkeypatch):
+    """Web edit_file must not touch disk until the confirmation is approved."""
+    from corecoder.tools.edit import EditFileTool
+    from corecoder.web import events
+    from corecoder.web.confirm_registry import registry
+
+    path = tmp_path / "sample.py"
+    path.write_text("answer = 41\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    emitted = []
+    result = []
+    events.set_emitter(lambda event_type, data: emitted.append((event_type, data)))
+    worker = threading.Thread(
+        target=lambda: result.append(EditFileTool().execute("sample.py", "41", "42")),
+        daemon=True,
+    )
+    try:
+        worker.start()
+        deadline = time.monotonic() + 2
+        while not emitted and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert emitted and emitted[0][0] == "confirm_required"
+        assert path.read_text(encoding="utf-8") == "answer = 41\n"
+        assert registry.resolve(emitted[0][1]["id"], approve=True)
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+        assert "Edited" in result[0]
+        assert path.read_text(encoding="utf-8") == "answer = 42\n"
+    finally:
+        events.clear_emitter()
+
+
+def test_parallel_confirmations_are_emitted_one_at_a_time():
+    """The single-modal MVP serializes parallel confirmation requests."""
+    from corecoder.web import events
+    from corecoder.web._confirmable import request_confirmation
+    from corecoder.web.confirm_registry import ConfirmResult, registry
+
+    emitted = []
+    results = []
+    events.set_emitter(lambda event_type, data: emitted.append((event_type, data)))
+    workers = [
+        threading.Thread(
+            target=lambda name=name: results.append(
+                request_confirmation("bash", {"command": name, "reason": "test"}, timeout=2)
+            ),
+            daemon=True,
+        )
+        for name in ("first", "second")
+    ]
+    try:
+        for worker in workers:
+            worker.start()
+
+        deadline = time.monotonic() + 2
+        while len(emitted) < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(emitted) == 1
+        assert registry.resolve(emitted[0][1]["id"], approve=True)
+
+        deadline = time.monotonic() + 2
+        while len(emitted) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert len(emitted) == 2
+        assert registry.resolve(emitted[1][1]["id"], approve=True)
+
+        for worker in workers:
+            worker.join(timeout=2)
+        assert results == [ConfirmResult.APPROVED, ConfirmResult.APPROVED]
+    finally:
+        events.clear_emitter()
+
+
+def test_web_write_requires_confirmation_and_reject_keeps_disk_unchanged(tmp_path, monkeypatch):
+    """write_file cannot bypass the Web approval flow by overwriting a file."""
+    from corecoder.tools.write import WriteFileTool
+    from corecoder.web import events
+    from corecoder.web.confirm_registry import registry
+
+    path = tmp_path / "notes.txt"
+    path.write_text("original\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    emitted = []
+    result = []
+    events.set_emitter(lambda event_type, data: emitted.append((event_type, data)))
+    worker = threading.Thread(
+        target=lambda: result.append(WriteFileTool().execute("notes.txt", "replacement\n")),
+        daemon=True,
+    )
+    try:
+        worker.start()
+        deadline = time.monotonic() + 2
+        while not emitted and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert emitted[0][1]["action"] == "write_file"
+        assert path.read_text(encoding="utf-8") == "original\n"
+        assert registry.resolve(emitted[0][1]["id"], approve=False)
+        worker.join(timeout=2)
+        assert "explicitly rejected" in result[0]
+        assert path.read_text(encoding="utf-8") == "original\n"
+    finally:
+        events.clear_emitter()
+
+
+def test_web_file_tool_rejects_path_outside_workspace(tmp_path, monkeypatch):
+    from corecoder.tools.read import ReadFileTool
+    from corecoder.web import events
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    monkeypatch.chdir(workspace)
+    events.set_emitter(lambda *_: None)
+    try:
+        result = ReadFileTool().execute(str(outside))
+        assert "outside workspace" in result
+    finally:
+        events.clear_emitter()
