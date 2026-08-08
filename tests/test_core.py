@@ -1,5 +1,7 @@
 """Tests for core modules: config, context, session, imports."""
 
+import threading
+
 from corecoder import Agent, LLM, Config, ALL_TOOLS, __version__
 from corecoder import session as session_module
 from corecoder.context import ContextManager, estimate_tokens
@@ -235,3 +237,63 @@ def test_interrupt_backfills_missing_tool_replies():
     ids = [m["tool_call_id"] for m in replies]
     assert sorted(ids) == ["a", "b"]
     assert ids.count("a") == 1  # the already-answered call wasn't duplicated
+
+
+def test_llm_cancel_closes_blocked_stream_promptly():
+    """Cancelling must wake a model stream blocked waiting for its next chunk."""
+    from corecoder.llm import LLMCancelled
+
+    class _BlockedStream:
+        def __init__(self):
+            self.closed = threading.Event()
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            self.closed.wait(5)
+            raise RuntimeError("stream closed")
+
+        def close(self):
+            self.closed.set()
+
+    stream = _BlockedStream()
+    llm = LLM.__new__(LLM)
+    llm.model = "test"
+    llm.extra = {}
+    llm.total_prompt_tokens = 0
+    llm.total_completion_tokens = 0
+    llm._stream_lock = threading.Lock()
+    llm._active_stream = None
+    llm._call_with_retry = lambda params: stream
+    cancel_event = threading.Event()
+    errors = []
+
+    worker = threading.Thread(
+        target=lambda: _capture_error(
+            errors,
+            lambda: llm.chat([], cancel_event=cancel_event),
+        ),
+        daemon=True,
+    )
+    worker.start()
+    for _ in range(100):
+        with llm._stream_lock:
+            if llm._active_stream is stream:
+                break
+        threading.Event().wait(0.01)
+
+    cancel_event.set()
+    assert llm.cancel_current_request()
+    worker.join(timeout=0.5)
+
+    assert not worker.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], LLMCancelled)
+
+
+def _capture_error(errors, callback):
+    try:
+        callback()
+    except Exception as exc:
+        errors.append(exc)

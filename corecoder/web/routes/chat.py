@@ -160,12 +160,22 @@ async def cancel_run(session_id: str, request: Request):
     """
     manager = request.app.state.sessions
     try:
-        manager.get(session_id)
+        session = manager.get(session_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Conversation not found") from None
 
     if not manager.cancel_run(session_id):
         raise HTTPException(status_code=409, detail="No running task to cancel for this session")
+
+    # Publish the transition before closing resources: closing the model stream
+    # can let the worker finish immediately, and a later write would otherwise
+    # race cancelled -> cancelling in the wrong direction.
+    manager.set_status(session_id, "cancelling")
+
+    # Wake a model SDK blocked while reading the next streaming chunk.
+    cancel_model = getattr(session.agent.llm, "cancel_current_request", None)
+    if callable(cancel_model):
+        cancel_model()
 
     # Wake any pending confirmation so the tool returns immediately
     from ..confirm_registry import registry
@@ -175,7 +185,6 @@ async def cancel_run(session_id: str, request: Request):
     from ...tools.bash import cancel_current_command
     cancel_current_command()
 
-    manager.set_status(session_id, "cancelling")
     return {"status": "cancelling"}
 
 

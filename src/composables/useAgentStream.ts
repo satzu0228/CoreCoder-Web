@@ -1,6 +1,10 @@
 import { useChatStore } from '../stores/chatStore'
 import type { ConfirmEvent, Message, SessionSummary, SessionStatus, ToolCall } from '../stores/chatStore'
 
+// Composable instances are used by several components. Keep active display
+// cancellation at module scope so the stop button can always reach the stream.
+const stopStreamingBySession = new Map<string, () => void>()
+
 function errorText(payload: unknown, fallback: string): string {
   if (!payload || typeof payload !== 'object') return fallback
   const detail = (payload as { detail?: unknown }).detail
@@ -186,6 +190,8 @@ export function useAgentStream() {
     let queueIndex = 0
     let typing = false
     let streamEnded = false
+    let cancelledLocally = false
+    let typingTimer: number | null = null
     let resolveTyping: () => void = () => undefined
     let typingResolved = false
     const typingFinished = new Promise<void>(resolve => { resolveTyping = resolve })
@@ -204,6 +210,11 @@ export function useAgentStream() {
     }
 
     function typeNextCharacter() {
+      if (cancelledLocally) {
+        typing = false
+        markTypingFinished()
+        return
+      }
       if (queueIndex >= characterQueue.length) {
         typing = false
         finishTypingIfReady()
@@ -211,10 +222,11 @@ export function useAgentStream() {
       }
       assistant.content += characterQueue[queueIndex]
       queueIndex += 1
-      window.setTimeout(typeNextCharacter, 11)
+      typingTimer = window.setTimeout(typeNextCharacter, 11)
     }
 
     function enqueueText(text: string) {
+      if (cancelledLocally) return
       completeText += text
       characterQueue.push(...Array.from(text))
       if (!typing) {
@@ -222,6 +234,19 @@ export function useAgentStream() {
         typeNextCharacter()
       }
     }
+
+    const stopStreamingDisplay = () => {
+      cancelledLocally = true
+      stopWaitingTimer()
+      if (typingTimer !== null) window.clearTimeout(typingTimer)
+      characterQueue.length = queueIndex
+      typing = false
+      streamEnded = true
+      assistant.isStreaming = false
+      assistant.statusText = '正在停止任务…'
+      markTypingFinished()
+    }
+    stopStreamingBySession.set(sessionId, stopStreamingDisplay)
 
     try {
       while (true) {
@@ -234,6 +259,10 @@ export function useAgentStream() {
           if (!frame.startsWith('data: ')) continue
           const event = JSON.parse(frame.slice(6))
           if (event.session_id && event.session_id !== sessionId) continue
+          if (cancelledLocally) {
+            if (event.type === 'done') streamCompleted = true
+            continue
+          }
           // Track sequence for recovery
           if (typeof event.sequence === 'number' && event.sequence > lastSequence) {
             lastSequence = event.sequence
@@ -270,6 +299,7 @@ export function useAgentStream() {
         }
       }
     } catch (error) {
+      if (cancelledLocally) return
       store.notice = '连接已中断，正在尝试重连…'
       if (store.runningSessionId === sessionId) {
         await reconnectStream(sessionId)
@@ -282,6 +312,9 @@ export function useAgentStream() {
       await typingFinished
       await refreshSessions().catch(() => undefined)
       if (streamCompleted) await loadSession(sessionId).catch(() => undefined)
+      if (stopStreamingBySession.get(sessionId) === stopStreamingDisplay) {
+        stopStreamingBySession.delete(sessionId)
+      }
     }
   }
 
@@ -385,6 +418,7 @@ export function useAgentStream() {
     const sessionId = store.runningSessionId || store.activeSessionId
     if (!sessionId) return
     store.updateSession(sessionId, { status: 'cancelling' as SessionStatus })
+    stopStreamingBySession.get(sessionId)?.()
     try {
       const response = await fetch(`/api/sessions/${sessionId}/cancel`, {
         method: 'POST', headers: headers(),

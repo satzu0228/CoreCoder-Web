@@ -63,7 +63,8 @@ def test_chat_streams_tokens_then_done():
     assert resp.status_code == 200
 
     events = _parse_sse(resp.text)
-    assert events[-1] == {"type": "done"}
+    assert events[-1]["type"] == "done"
+    assert events[-1]["status"] == "idle"
     token_text = "".join(e["text"] for e in events if e["type"] == "token")
     assert token_text == "hello world"
 
@@ -88,7 +89,8 @@ def test_chat_reports_agent_errors_without_crashing_the_stream():
     )
     assert resp.status_code == 200
     events = _parse_sse(resp.text)
-    assert events[-1] == {"type": "done"}
+    assert events[-1]["type"] == "done"
+    assert events[-1]["status"] == "error"
     assert any(e["type"] == "error" and "boom" in e["message"] for e in events)
 
 
@@ -134,7 +136,8 @@ def test_chat_emits_tool_start_and_tool_end_events():
     assert resp.status_code == 200
 
     events = _parse_sse(resp.text)
-    assert events[-1] == {"type": "done"}
+    assert events[-1]["type"] == "done"
+    assert events[-1]["status"] == "idle"
 
     # Verify tool_start event
     tool_start_events = [e for e in events if e["type"] == "tool_start"]
@@ -449,7 +452,10 @@ def test_web_sessions_are_persisted_and_restored_for_workspace(tmp_path):
         headers=headers,
     )
     assert response.status_code == 200
-    assert _parse_sse(response.text)[-1] == {"type": "done", "session_id": session_id}
+    done = _parse_sse(response.text)[-1]
+    assert done["type"] == "done"
+    assert done["status"] == "idle"
+    assert done["session_id"] == session_id
 
     restored_app = create_app(
         Agent(llm=ScriptedLLM([]), tools=[]),

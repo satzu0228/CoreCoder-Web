@@ -18,6 +18,7 @@ from .tools.agent import AgentTool
 from .prompt import system_prompt
 from .context import ContextManager
 from .web import events
+from .llm import LLMCancelled
 
 
 class Agent:
@@ -59,11 +60,19 @@ class Agent:
         self.context.maybe_compress(self.messages, self.llm)
 
         for _ in range(self.max_rounds):
-            resp = self.llm.chat(
-                messages=self._full_messages(),
-                tools=self._tool_schemas(),
-                on_token=on_token,
-            )
+            chat_kwargs = {
+                "messages": self._full_messages(),
+                "tools": self._tool_schemas(),
+                "on_token": on_token,
+            }
+            # Keep third-party/test LLM adapters that predate cancellation
+            # compatible while passing the event to adapters that support it.
+            if "cancel_event" in inspect.signature(self.llm.chat).parameters:
+                chat_kwargs["cancel_event"] = cancel_event
+            try:
+                resp = self.llm.chat(**chat_kwargs)
+            except LLMCancelled:
+                return "[cancelled by user]"
 
             # Check cancel signal before acting on LLM response
             if cancel_event and cancel_event.is_set():

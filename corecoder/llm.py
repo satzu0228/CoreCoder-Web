@@ -10,10 +10,15 @@ single unified interface. Set CORECODER_PROVIDER=litellm.
 """
 
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 
 from openai import OpenAI, APIError, BadRequestError, RateLimitError, APITimeoutError, APIConnectionError
+
+
+class LLMCancelled(Exception):
+    """Raised when the caller cancels an in-flight model stream."""
 
 
 @dataclass
@@ -96,9 +101,11 @@ class ScriptedLLM:
         self._turns = list(script)
         self.model = model
 
-    def chat(self, messages, tools=None, on_token=None) -> LLMResponse:
+    def chat(self, messages, tools=None, on_token=None, cancel_event=None) -> LLMResponse:
         if not self._turns:
             raise RuntimeError("ScriptedLLM ran out of turns")
+        if cancel_event and cancel_event.is_set():
+            raise LLMCancelled()
         resp = self._turns.pop(0)
         if on_token and resp.content:
             on_token(resp.content)
@@ -119,6 +126,34 @@ class LLM:
         self.extra = kwargs  # temperature, max_tokens, etc.
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self._stream_lock = threading.Lock()
+        self._active_stream = None
+
+    def cancel_current_request(self) -> bool:
+        """Close the active streaming response so a blocked read wakes promptly."""
+        lock = getattr(self, "_stream_lock", None)
+        if lock is None:
+            return False
+        with lock:
+            stream = self._active_stream
+        close = getattr(stream, "close", None)
+        if not callable(close):
+            return False
+        try:
+            close()
+            return True
+        except Exception:
+            # The stream may have completed between lookup and close.
+            return False
+
+    def _set_active_stream(self, stream) -> None:
+        with self._stream_lock:
+            self._active_stream = stream
+
+    def _clear_active_stream(self, stream) -> None:
+        with self._stream_lock:
+            if self._active_stream is stream:
+                self._active_stream = None
 
     @property
     def estimated_cost(self) -> float | None:
@@ -137,6 +172,7 @@ class LLM:
         messages: list[dict],
         tools: list[dict] | None = None,
         on_token=None,
+        cancel_event=None,
     ) -> LLMResponse:
         """Send messages, stream back response, handle tool calls."""
         params: dict = {
@@ -163,37 +199,47 @@ class LLM:
         prompt_tok = 0
         completion_tok = 0
 
-        for chunk in stream:
-            # usage info comes in the final chunk
-            if chunk.usage:
-                # some providers send usage with null fields; coerce to 0 so the
-                # running totals below don't blow up on int + None
-                prompt_tok = chunk.usage.prompt_tokens or 0
-                completion_tok = chunk.usage.completion_tokens or 0
+        self._set_active_stream(stream)
+        try:
+            for chunk in stream:
+                if cancel_event and cancel_event.is_set():
+                    raise LLMCancelled()
+                # usage info comes in the final chunk
+                if chunk.usage:
+                    # some providers send usage with null fields; coerce to 0 so the
+                    # running totals below don't blow up on int + None
+                    prompt_tok = chunk.usage.prompt_tokens or 0
+                    completion_tok = chunk.usage.completion_tokens or 0
 
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
 
-            # accumulate text
-            if delta.content:
-                content_parts.append(delta.content)
-                if on_token:
-                    on_token(delta.content)
+                # accumulate text
+                if delta.content:
+                    content_parts.append(delta.content)
+                    if on_token:
+                        on_token(delta.content)
 
-            # accumulate tool calls across chunks
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tc_map:
-                        tc_map[idx] = {"id": "", "name": "", "args": ""}
-                    if tc_delta.id:
-                        tc_map[idx]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            tc_map[idx]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            tc_map[idx]["args"] += tc_delta.function.arguments
+                # accumulate tool calls across chunks
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tc_map:
+                            tc_map[idx] = {"id": "", "name": "", "args": ""}
+                        if tc_delta.id:
+                            tc_map[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tc_map[idx]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tc_map[idx]["args"] += tc_delta.function.arguments
+        except Exception as exc:
+            if cancel_event and cancel_event.is_set():
+                raise LLMCancelled() from exc
+            raise
+        finally:
+            self._clear_active_stream(stream)
 
         # parse accumulated tool calls
         parsed: list[ToolCall] = []
@@ -261,12 +307,15 @@ class LiteLLM(LLM):
         self.extra = kwargs
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+        self._stream_lock = threading.Lock()
+        self._active_stream = None
 
     def chat(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
         on_token=None,
+        cancel_event=None,
     ) -> LLMResponse:
         """Send messages via litellm, stream back response, handle tool calls."""
         params: dict = {
@@ -288,33 +337,43 @@ class LiteLLM(LLM):
         prompt_tok = 0
         completion_tok = 0
 
-        for chunk in stream:
-            usage = getattr(chunk, "usage", None)
-            if usage:
-                prompt_tok = getattr(usage, "prompt_tokens", 0) or 0
-                completion_tok = getattr(usage, "completion_tokens", 0) or 0
+        self._set_active_stream(stream)
+        try:
+            for chunk in stream:
+                if cancel_event and cancel_event.is_set():
+                    raise LLMCancelled()
+                usage = getattr(chunk, "usage", None)
+                if usage:
+                    prompt_tok = getattr(usage, "prompt_tokens", 0) or 0
+                    completion_tok = getattr(usage, "completion_tokens", 0) or 0
 
-            if not getattr(chunk, "choices", None):
-                continue
-            delta = chunk.choices[0].delta
+                if not getattr(chunk, "choices", None):
+                    continue
+                delta = chunk.choices[0].delta
 
-            if getattr(delta, "content", None):
-                content_parts.append(delta.content)
-                if on_token:
-                    on_token(delta.content)
+                if getattr(delta, "content", None):
+                    content_parts.append(delta.content)
+                    if on_token:
+                        on_token(delta.content)
 
-            if getattr(delta, "tool_calls", None):
-                for tc_delta in delta.tool_calls:
-                    idx = tc_delta.index
-                    if idx not in tc_map:
-                        tc_map[idx] = {"id": "", "name": "", "args": ""}
-                    if tc_delta.id:
-                        tc_map[idx]["id"] = tc_delta.id
-                    if tc_delta.function:
-                        if tc_delta.function.name:
-                            tc_map[idx]["name"] = tc_delta.function.name
-                        if tc_delta.function.arguments:
-                            tc_map[idx]["args"] += tc_delta.function.arguments
+                if getattr(delta, "tool_calls", None):
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tc_map:
+                            tc_map[idx] = {"id": "", "name": "", "args": ""}
+                        if tc_delta.id:
+                            tc_map[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tc_map[idx]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tc_map[idx]["args"] += tc_delta.function.arguments
+        except Exception as exc:
+            if cancel_event and cancel_event.is_set():
+                raise LLMCancelled() from exc
+            raise
+        finally:
+            self._clear_active_stream(stream)
 
         parsed: list[ToolCall] = []
         for idx in sorted(tc_map):

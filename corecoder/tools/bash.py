@@ -150,7 +150,7 @@ class BashTool(Tool):
             popen_kwargs["preexec_fn"] = os.setpgrp
 
         try:
-            proc = subprocess.Popen(**popen_kwargs)
+            proc = subprocess.Popen(command, **popen_kwargs)
             _set_current_process(proc)
             try:
                 stdout, stderr = proc.communicate(timeout=timeout)
