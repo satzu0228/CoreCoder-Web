@@ -1,5 +1,5 @@
 <template>
-  <div class="trace-step" :class="{ complete: toolCall.status === 'done' }">
+  <div class="trace-step">
     <span class="trace-node" aria-hidden="true">
       <svg v-if="toolCall.status === 'done'" viewBox="0 0 16 16"><path d="m4 8 2.5 2.5L12 5" /></svg>
       <span v-else class="trace-spinner"></span>
@@ -44,15 +44,72 @@ function formatArgs(args: Record<string, unknown>) { return JSON.stringify(args,
 </script>
 
 <style scoped>
-.trace-step { position: relative; display: grid; grid-template-columns: 22px minmax(0,1fr); gap: 9px; padding: 0 0 15px; opacity: 0; animation: trace-enter .24s ease-out forwards; animation-delay: calc(var(--trace-index, 0) * 110ms); }
+/* Tailwind 无法表达的：动画 + 连接线伪元素 */
+.trace-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+  padding: 0 0 15px;
+  opacity: 0;
+  animation: trace-enter .24s ease-out forwards;
+  animation-delay: calc(var(--trace-index, 0) * 110ms);
+}
 .trace-step:last-child { padding-bottom: 0; }
-.trace-step:not(:last-child)::before { content: ''; position: absolute; left: 10px; top: 21px; bottom: -1px; width: 1px; background: #d8e0e9; }
-.trace-node { z-index: 1; width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid #b9c8e6; border-radius: 50%; background: #f7f9fc; color: #3767d6; }
-.complete .trace-node { border-color: #add2c9; color: #1f8a78; }
-.trace-node svg { width: 13px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-.trace-spinner { width: 7px; height: 7px; border: 1.5px solid #aebddd; border-top-color: #3767d6; border-radius: 50%; animation: spin .8s linear infinite; }
+.trace-step:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 21px;
+  bottom: -1px;
+  width: 1px;
+  background: #d8e0e9;
+}
+.trace-node {
+  z-index: 1;
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #b9c8e6;
+  border-radius: 50%;
+  background: #f7f9fc;
+  color: #3767d6;
+}
+.trace-step.complete .trace-node {
+  border-color: #add2c9;
+  color: #1f8a78;
+}
+.trace-node svg {
+  width: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+.trace-spinner {
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid #aebddd;
+  border-top-color: #3767d6;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
 .trace-content { min-width: 0; padding-top: 1px; }
-.trace-summary { width: 100%; display: grid; grid-template-columns: auto minmax(0,1fr) 16px; align-items: center; gap: 8px; padding: 1px 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.trace-summary {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 1px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .tool-name { color: #3b4858; font-size: 12px; font-weight: 700; }
 .tool-brief { overflow: hidden; color: #8792a2; font: 500 10px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .trace-summary > svg { width: 14px; fill: none; stroke: #8792a2; stroke-width: 1.4; transition: transform .16s; }
@@ -65,5 +122,9 @@ function formatArgs(args: Record<string, unknown>) { return JSON.stringify(args,
 .running-copy { color: #71809a; font-size: 11px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes trace-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .trace-step { opacity: 1; animation: none; } .trace-spinner { animation: none; } .trace-summary > svg { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .trace-step { opacity: 1; animation: none; }
+  .trace-spinner { animation: none; }
+  .trace-summary > svg { transition: none; }
+}
 </style>

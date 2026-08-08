@@ -6,7 +6,7 @@ A human-in-the-loop Web coding agent, built by extending [CoreCoder](https://git
 
 ## Status
 
-✅ **The v2 conversation workspace is implemented.** The left sidebar now holds workspace-scoped conversation history; the main area uses chat bubbles and an inline agent execution trace. Conversations survive server restarts, SSE and confirmation routes are session-aware, and Monaco diff remains an on-demand modal. See [`docs/v2 优化规划.md`](<docs/v2 优化规划.md>) and [`docs/开发日志.md`](<docs/开发日志.md>).
+✅ **The v2 conversation workspace is implemented.** The left sidebar now holds workspace-scoped conversation history; the main area uses chat bubbles and an inline agent execution trace. Conversations survive server restarts, SSE and confirmation routes are session-aware, and Monaco diff remains an on-demand modal. See the [`v2 delivery record`](<docs/v2 优化规划.md>) and the [`v3 optimization plan`](<docs/v3 优化规划.md>).
 
 ## What this is
 
@@ -67,7 +67,7 @@ CoreCoder's tool execution is synchronous: `tool.execute()` returns a string and
 | v2 M1 | Workspace-scoped conversation storage and session APIs |
 | v2 M2 | Conversation sidebar, chat bubbles, and chained agent execution trace |
 | v2 M3 | Session-aware chat/confirmation routes, refresh recovery, and single-run lock |
-| Next | E2E coverage, connection recovery, Markdown sanitization, and security hardening |
+| v3 | Markdown sanitization, task cancellation, event recovery, performance work, and automated tests |
 
 ## Development
 

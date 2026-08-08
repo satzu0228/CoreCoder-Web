@@ -47,8 +47,14 @@ class Agent:
     def _tool_schemas(self) -> list[dict]:
         return [t.schema() for t in self.tools]
 
-    def chat(self, user_input: str, on_token=None, on_tool=None) -> str:
-        """Process one user message. May involve multiple LLM/tool rounds."""
+    def chat(self, user_input: str, on_token=None, on_tool=None, cancel_event=None) -> str:
+        """Process one user message. May involve multiple LLM/tool rounds.
+
+        Args:
+            cancel_event: Optional threading.Event. When set, the loop terminates
+                          at the next safe checkpoint (after LLM response, before
+                          tool execution).
+        """
         self.messages.append({"role": "user", "content": user_input})
         self.context.maybe_compress(self.messages, self.llm)
 
@@ -59,10 +65,20 @@ class Agent:
                 on_token=on_token,
             )
 
+            # Check cancel signal before acting on LLM response
+            if cancel_event and cancel_event.is_set():
+                self._answer_pending_tool_calls(resp.tool_calls)
+                return "[cancelled by user]"
+
             # no tool calls -> LLM is done, return text
             if not resp.tool_calls:
                 self.messages.append(resp.message)
                 return resp.content
+
+            # Check cancel again before executing tools
+            if cancel_event and cancel_event.is_set():
+                self._answer_pending_tool_calls(resp.tool_calls)
+                return "[cancelled by user]"
 
             # tool calls -> execute (parallel when multiple, like Claude Code's
             # StreamingToolExecutor which runs independent tools concurrently)

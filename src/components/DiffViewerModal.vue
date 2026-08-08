@@ -1,12 +1,15 @@
 <template>
   <Teleport to="body">
-    <div v-if="store.diffViewerOpen" class="diff-modal-overlay" @click="close">
-      <div class="diff-modal" @click.stop>
-        <div class="modal-header">
-          <div><span>文件变更</span><h3>{{ store.diffViewerData.fileName }}</h3></div>
-          <button @click="close" class="close-btn" aria-label="关闭 diff">×</button>
+    <div v-if="store.diffViewerOpen" class="fixed inset-0 z-[1100] flex items-center justify-center bg-brand-950/50 backdrop-blur-sm" @click="close">
+      <div class="bg-white border border-white/35 rounded-2xl shadow-2xl w-[90%] max-w-[1200px] h-[80vh] max-h-[800px] flex flex-col" @click.stop>
+        <div class="flex justify-between items-center py-[15px] px-[18px] border-b border-brand-200">
+          <div>
+            <span class="block mb-[3px] text-brand-500 font-bold text-[9px] font-mono tracking-widest uppercase">文件变更</span>
+            <h3 class="m-0 text-brand-800 font-semibold text-xs font-mono">{{ store.diffViewerData.fileName }}</h3>
+          </div>
+          <button @click="close" class="bg-transparent border-0 cursor-pointer text-xl text-brand-600 p-1 hover:text-black" aria-label="关闭 diff">×</button>
         </div>
-        <div class="modal-body">
+        <div class="flex-1 overflow-hidden">
           <DiffViewer
             :old-content="store.diffViewerData.oldContent"
             :new-content="store.diffViewerData.newContent"
@@ -28,65 +31,3 @@ const close = () => {
   store.closeDiffViewer()
 }
 </script>
-
-<style scoped>
-.diff-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(20, 29, 40, 0.52);
-  backdrop-filter: blur(3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1100;
-}
-
-.diff-modal {
-  background: white;
-  border: 1px solid rgba(255,255,255,.35);
-  border-radius: 15px;
-  box-shadow: 0 28px 80px rgba(18,28,40,.27);
-  width: 90%;
-  max-width: 1200px;
-  height: 80vh;
-  max-height: 800px;
-  display: flex;
-  flex-direction: column;
-}
-
-.modal-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 15px 18px;
-  border-bottom: 1px solid #e2e7ed;
-}
-
-.modal-header span { display: block; margin-bottom: 3px; color: #8793a2; font: 700 9px Consolas, monospace; letter-spacing: .09em; text-transform: uppercase; }
-.modal-header h3 {
-  margin: 0;
-  color: #293748;
-  font: 600 12px Consolas, monospace;
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 20px;
-  color: #748093;
-  padding: 4px;
-}
-
-.close-btn:hover {
-  color: #000;
-}
-
-.modal-body {
-  flex: 1;
-  overflow: hidden;
-}
-</style>

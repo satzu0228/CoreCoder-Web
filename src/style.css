@@ -2,17 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  font-family: Lato, "Microsoft YaHei", "PingFang SC", sans-serif;
-  color: #263343;
-  background: #f5f7fa;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
+@layer base {
+  :root {
+    font-family: Lato, "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: #263343;
+    background: #f5f7fa;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
 
-* { box-sizing: border-box; }
-html, body, #app { width: 100%; height: 100%; margin: 0; }
-body { min-width: 320px; overflow: hidden; }
-button, input, textarea { font: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid rgba(55,103,214,.2); outline-offset: 2px; }
-::selection { background: rgba(55,103,214,.18); }
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body, #app {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    min-width: 320px;
+    overflow: hidden;
+  }
+
+  button, input, textarea {
+    font: inherit;
+  }
+
+  button:focus-visible, input:focus-visible, textarea:focus-visible {
+    outline: 3px solid rgba(55, 103, 214, .2);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgba(55, 103, 214, .18);
+  }
+}

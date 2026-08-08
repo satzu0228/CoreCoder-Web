@@ -1,8 +1,11 @@
 <template>
-  <div id="app" class="app-shell">
+  <div id="app" class="w-full h-dvh flex overflow-hidden bg-brand-50">
     <SessionSidebar />
     <ChatPanel />
-    <div v-if="booting" class="boot-screen"><span class="boot-mark">C</span><p>正在打开工作空间…</p></div>
+    <div v-if="booting" class="fixed inset-0 z-[100] grid place-content-center justify-items-center bg-brand-50 text-brand-500 text-xs">
+      <span class="w-[42px] h-[42px] grid place-items-center rounded-xl bg-brand-950 text-white font-bold text-[15px] font-mono">C</span>
+      <p>正在打开工作空间…</p>
+    </div>
     <ConfirmModal />
     <DiffViewerModal />
   </div>
@@ -41,9 +44,3 @@ onMounted(async () => {
   }
 })
 </script>
-
-<style scoped>
-.app-shell { width: 100%; height: 100dvh; display: flex; overflow: hidden; background: #f5f7fa; }
-.boot-screen { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; background: #f5f7fa; color: #7d8998; font-size: 12px; }
-.boot-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: #17202a; color: #fff; font: 700 15px Consolas, monospace; }
-</style>

@@ -1,7 +1,7 @@
 <template>
-  <div class="diff-viewer">
-    <div v-if="loading" class="loading">Loading Monaco Editor...</div>
-    <div ref="editorContainer" class="editor-container" :style="{ display: loading ? 'none' : undefined }"></div>
+  <div class="flex flex-col h-full bg-white">
+    <div v-if="loading" class="flex items-center justify-center h-full text-brand-500">Loading Monaco Editor...</div>
+    <div ref="editorContainer" class="flex-1 min-h-0" :style="{ display: loading ? 'none' : undefined }"></div>
   </div>
 </template>
 
@@ -55,25 +55,3 @@ onUnmounted(() => {
   modifiedModel?.dispose()
 })
 </script>
-
-<style scoped>
-.diff-viewer {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: white;
-}
-
-.loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: #999;
-}
-
-.editor-container {
-  flex: 1;
-  min-height: 0;
-}
-</style>

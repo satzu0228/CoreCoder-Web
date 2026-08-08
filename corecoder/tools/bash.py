@@ -8,7 +8,9 @@ Claude Code's BashTool is 1,143 lines. This is the distilled version:
 """
 
 import os
+import platform
 import re
+import signal
 import subprocess
 import threading
 from .base import Tool
@@ -27,6 +29,45 @@ except ImportError:
 # when the agent executes tools in parallel two bash calls never race on one
 # shared global: each worker thread carries its own cwd. See article 05.
 _local = threading.local()
+
+# Track the currently running subprocess so the cancel flow can terminate it.
+# Protected by _proc_lock; cleared when the process exits naturally.
+_current_process: subprocess.Popen | None = None
+_proc_lock = threading.Lock()
+
+
+def cancel_current_command() -> bool:
+    """Kill the currently running bash subprocess (if any). Returns True if killed."""
+    with _proc_lock:
+        proc = _current_process
+    if proc is None:
+        return False
+    try:
+        pid = proc.pid
+        if platform.system() == "Windows":
+            # Terminate entire process tree on Windows
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            # Send SIGTERM to the process group on Unix
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+        proc.kill()
+        return True
+    except Exception:
+        return False
+
+
+def _set_current_process(proc: subprocess.Popen | None) -> None:
+    with _proc_lock:
+        global _current_process
+        _current_process = proc
+
 
 # patterns that could wreck the filesystem or leak secrets
 _DANGEROUS_PATTERNS = [
@@ -93,24 +134,35 @@ class BashTool(Tool):
         # use this thread's own tracked working directory
         cwd = getattr(_local, "cwd", None) or os.getcwd()
 
+        # Use Popen with process group so cancel can terminate the entire tree.
+        popen_kwargs: dict = {
+            "shell": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "cwd": cwd,
+        }
+        if platform.system() == "Windows":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            popen_kwargs["preexec_fn"] = os.setpgrp
+
         try:
-            proc = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-                cwd=cwd,
-            )
+            proc = subprocess.Popen(**popen_kwargs)
+            _set_current_process(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=timeout)
+            finally:
+                _set_current_process(None)
 
             # track cd commands so next command runs in the right place
             if proc.returncode == 0:
                 _update_cwd(command, cwd)
-            out = proc.stdout
-            if proc.stderr:
-                out += f"\n[stderr]\n{proc.stderr}"
+            out = stdout
+            if stderr:
+                out += f"\n[stderr]\n{stderr}"
             if proc.returncode != 0:
                 out += f"\n[exit code: {proc.returncode}]"
             # keep head + tail to preserve the most useful info
@@ -122,8 +174,17 @@ class BashTool(Tool):
                 )
             return out.strip() or "(no output)"
         except subprocess.TimeoutExpired:
+            _set_current_process(None)
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=10)
+                else:
+                    os.killpg(proc.pid, signal.SIGKILL)
+            except Exception:
+                pass
             return f"Error: timed out after {timeout}s"
         except Exception as e:
+            _set_current_process(None)
             return f"Error running command: {e}"
 
 

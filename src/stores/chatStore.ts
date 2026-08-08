@@ -1,7 +1,7 @@
 import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 
-export type SessionStatus = 'idle' | 'running' | 'waiting_confirmation' | 'interrupted' | 'error'
+export type SessionStatus = 'idle' | 'running' | 'waiting_confirmation' | 'cancelling' | 'cancelled' | 'interrupted' | 'error'
 
 export interface SessionSummary {
   id: string

@@ -83,6 +83,7 @@ class WebSessionManager:
         self._sessions: dict[str, WebSession] = {}
         self._lock = threading.RLock()
         self.running_session_id: str | None = None
+        self._cancel_events: dict[str, threading.Event] = {}
         self._load()
 
         # Preserve a pre-populated Agent supplied by callers such as tests or
@@ -231,6 +232,7 @@ class WebSessionManager:
                 raise RuntimeError(self.running_session_id)
             session = self.get(session_id)
             self.running_session_id = session_id
+            self._cancel_events[session_id] = threading.Event()
             session.status = "running"
             session.updated_at = _now()
             for tool in session.agent.tools:
@@ -238,6 +240,20 @@ class WebSessionManager:
                     tool._parent_agent = session.agent
             self._persist(session)
             return session
+
+    def cancel_event(self, session_id: str) -> threading.Event | None:
+        """Return the cancel Event for the given session, or None."""
+        with self._lock:
+            return self._cancel_events.get(session_id)
+
+    def cancel_run(self, session_id: str) -> bool:
+        """Signal cancellation for a running session. Returns True if found."""
+        with self._lock:
+            ev = self._cancel_events.get(session_id)
+            if ev is None:
+                return False
+            ev.set()
+            return True
 
     def set_status(self, session_id: str, status: str, persist: bool = True) -> None:
         with self._lock:
@@ -256,4 +272,5 @@ class WebSessionManager:
             session.updated_at = _now()
             if self.running_session_id == session_id:
                 self.running_session_id = None
+            self._cancel_events.pop(session_id, None)
             self._persist(session)

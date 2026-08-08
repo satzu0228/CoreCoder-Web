@@ -9,6 +9,8 @@
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@types/dompurify": "^3.0.5",
+    "dompurify": "^3.4.13",
     "marked": "^18.0.9",
     "monaco-editor": "^0.50.0",
     "naive-ui": "^2.37.0",

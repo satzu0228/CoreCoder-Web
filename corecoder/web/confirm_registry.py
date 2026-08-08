@@ -103,6 +103,20 @@ class ConfirmRegistry:
             self._events[event_id].set()
         return True
 
+    def cancel_all(self) -> int:
+        """Resolve all pending confirmations as rejected (for task cancel).
+
+        Returns the number of confirmations that were cancelled.
+        """
+        count = 0
+        with self._lock:
+            for event_id, ev in list(self._events.items()):
+                if not ev.is_set():
+                    self._results[event_id] = ConfirmResult.REJECTED
+                    ev.set()
+                    count += 1
+        return count
+
     def get_pending(self) -> dict | None:
         """Get current pending confirmation (if any) for page refresh recovery.
 

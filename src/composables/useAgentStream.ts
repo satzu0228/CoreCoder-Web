@@ -11,6 +11,7 @@ function errorText(payload: unknown, fallback: string): string {
 
 export function useAgentStream() {
   const store = useChatStore()
+  let lastSequence = 0
 
   const headers = (json = false) => ({
     ...(json ? { 'Content-Type': 'application/json' } : {}),
@@ -233,6 +234,10 @@ export function useAgentStream() {
           if (!frame.startsWith('data: ')) continue
           const event = JSON.parse(frame.slice(6))
           if (event.session_id && event.session_id !== sessionId) continue
+          // Track sequence for recovery
+          if (typeof event.sequence === 'number' && event.sequence > lastSequence) {
+            lastSequence = event.sequence
+          }
           if (event.type === 'token') {
             hasStreamActivity = true
             assistant.statusText = '正在生成回复'
@@ -265,7 +270,10 @@ export function useAgentStream() {
         }
       }
     } catch (error) {
-      store.notice = '连接已中断。对话仍可能在后台运行，刷新后可恢复状态。'
+      store.notice = '连接已中断，正在尝试重连…'
+      if (store.runningSessionId === sessionId) {
+        await reconnectStream(sessionId)
+      }
     } finally {
       stopWaitingTimer()
       reader.releaseLock()
@@ -274,6 +282,119 @@ export function useAgentStream() {
       await typingFinished
       await refreshSessions().catch(() => undefined)
       if (streamCompleted) await loadSession(sessionId).catch(() => undefined)
+    }
+  }
+
+  async function reconnectStream(sessionId: string) {
+    // Find the current streaming assistant message
+    const msgs = store.messagesBySession[sessionId]
+    if (!msgs) return
+    const assistant = [...msgs].reverse().find(m => m.role === 'assistant')
+    if (!assistant) return
+
+    assistant.isStreaming = true
+    assistant.statusText = '正在重连…'
+
+    let response: Response
+    try {
+      response = await fetch(
+        `/api/sessions/${sessionId}/events?after=${lastSequence}`,
+        { headers: headers() },
+      )
+    } catch {
+      store.notice = '重连失败，对话可能仍在后台运行，刷新可恢复。'
+      assistant.isStreaming = false
+      return
+    }
+    if (!response.ok) {
+      store.notice = `重连失败（${response.status}），刷新可恢复。`
+      assistant.isStreaming = false
+      return
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      assistant.isStreaming = false
+      store.notice = '重连失败，请刷新页面。'
+      return
+    }
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const knownToolIds = new Set((assistant.toolCalls || []).map(t => t.id))
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const frames = buffer.split('\n\n')
+        buffer = frames.pop() || ''
+        for (const frame of frames) {
+          if (!frame.startsWith('data: ')) continue
+          const event = JSON.parse(frame.slice(6))
+          if (event.session_id && event.session_id !== sessionId) continue
+          if (typeof event.sequence === 'number' && event.sequence > lastSequence) {
+            lastSequence = event.sequence
+          }
+
+          if (event.type === 'token') {
+            assistant.statusText = '正在生成回复'
+            assistant.content += event.text
+          } else if (event.type === 'tool_start') {
+            if (knownToolIds.has(event.id)) continue  // dedup
+            knownToolIds.add(event.id)
+            assistant.statusText = ''
+            const tool: ToolCall = { id: event.id, name: event.name, args: event.args || {}, status: 'running' }
+            assistant.toolCalls = [...(assistant.toolCalls || []), tool]
+          } else if (event.type === 'tool_end') {
+            const tool = assistant.toolCalls?.find(item => item.id === event.id)
+            if (tool) Object.assign(tool, { status: 'done', result: event.result || '' })
+          } else if (event.type === 'confirm_required') {
+            assistant.statusText = '等待确认'
+            store.pendingConfirm = { ...event, session_id: sessionId } as ConfirmEvent
+            store.pendingConfirmRestored = false
+            store.updateSession(sessionId, { status: 'waiting_confirmation' })
+          } else if (event.type === 'resync_required') {
+            // Buffer doesn't cover our range — full reload
+            store.setMessages(sessionId, event.messages || [])
+            store.updateSession(sessionId, { status: event.status || 'running' })
+            store.notice = ''
+            return
+          } else if (event.type === 'error') {
+            assistant.content += `${assistant.content ? '\n\n' : ''}运行失败：${event.message}`
+            store.updateSession(sessionId, { status: 'error' })
+          } else if (event.type === 'done') {
+            // Run complete — load final state from server
+            await loadSession(sessionId).catch(() => undefined)
+            await refreshSessions().catch(() => undefined)
+            store.notice = ''
+            return
+          }
+        }
+      }
+    } catch {
+      store.notice = '重连已中断，刷新可恢复。'
+    } finally {
+      reader.releaseLock()
+      assistant.isStreaming = false
+      await refreshSessions().catch(() => undefined)
+    }
+  }
+
+  async function cancelRun() {
+    const sessionId = store.runningSessionId || store.activeSessionId
+    if (!sessionId) return
+    store.updateSession(sessionId, { status: 'cancelling' as SessionStatus })
+    try {
+      const response = await fetch(`/api/sessions/${sessionId}/cancel`, {
+        method: 'POST', headers: headers(),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => null)
+        store.notice = errorText(data, `取消失败（${response.status}）`)
+      }
+    } catch {
+      store.notice = '无法连接服务，取消请求可能未生效'
     }
   }
 
@@ -300,6 +421,7 @@ export function useAgentStream() {
     renameSession,
     deleteSession,
     sendMessage,
+    cancelRun,
     submitConfirm,
     checkPendingConfirm,
   }
