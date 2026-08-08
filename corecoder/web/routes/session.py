@@ -1,16 +1,82 @@
-"""In-memory Web session state used to restore the UI after a refresh."""
+"""Workspace-scoped Web conversation APIs and legacy refresh adapters."""
 
 import json
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from ..confirm_registry import registry
 
 router = APIRouter()
 
 
+class UpdateSessionRequest(BaseModel):
+    title: str
+
+
+def _manager(request: Request):
+    return request.app.state.sessions
+
+
+def _get_session(request: Request, session_id: str):
+    try:
+        return _manager(request).get(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+
+
+@router.get("/api/sessions")
+async def list_sessions(request: Request) -> dict:
+    manager = _manager(request)
+    return {
+        "workspace": {"id": manager.workspace_id, "name": manager.workspace_name},
+        "sessions": manager.list(),
+        "running_session_id": manager.running_session_id,
+    }
+
+
+@router.post("/api/sessions", status_code=201)
+async def create_session(request: Request) -> dict:
+    return {"session": _manager(request).create().summary()}
+
+
+@router.get("/api/sessions/{session_id}")
+async def get_session(request: Request, session_id: str) -> dict:
+    session = _get_session(request, session_id)
+    return {"session": session.summary(), "messages": serialize_messages(list(session.agent.messages))}
+
+
+@router.patch("/api/sessions/{session_id}")
+async def update_session(request: Request, session_id: str, body: UpdateSessionRequest) -> dict:
+    try:
+        session = _manager(request).rename(session_id, body.title)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"session": session.summary()}
+
+
+@router.delete("/api/sessions/{session_id}", status_code=204)
+async def delete_session(request: Request, session_id: str):
+    try:
+        _manager(request).delete(session_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Conversation not found") from None
+    except RuntimeError:
+        raise HTTPException(status_code=409, detail="A running conversation cannot be deleted") from None
+
+
+@router.get("/api/sessions/{session_id}/pending")
+async def get_session_pending(request: Request, session_id: str) -> dict:
+    _get_session(request, session_id)
+    manager = _manager(request)
+    pending_data = registry.get_pending() if manager.running_session_id == session_id else None
+    return {"pending": pending_data}
+
+
 @router.get("/api/session/pending")
-async def get_pending_confirm() -> dict:
+async def get_pending_confirm(request: Request) -> dict:
     """Get current pending confirmation (if any) for page refresh recovery.
 
     Returns:
@@ -103,8 +169,10 @@ def serialize_messages(messages: list[dict]) -> list[dict]:
 @router.get("/api/session/messages")
 async def get_session_messages(request: Request) -> dict:
     """Return a stable UI DTO, not the Agent's provider-specific message list."""
-    messages = list(request.app.state.agent.messages)
+    session = _manager(request).ensure_default()
+    messages = list(session.agent.messages)
     return {
         "messages": serialize_messages(messages),
-        "running": bool(request.app.state.agent_running),
+        "running": bool(request.app.state.agent_running) or session.status in {"running", "waiting_confirmation"},
+        "session_id": session.id,
     }

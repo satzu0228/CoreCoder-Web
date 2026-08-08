@@ -13,6 +13,7 @@ import uvicorn
 
 from ..agent import Agent
 from .app import create_app
+from .web_sessions import WEB_SESSIONS_DIR
 
 
 def _pick_free_port() -> int:
@@ -33,7 +34,7 @@ def run_web(agent: Agent) -> int:
     """Start the Web server bound to the current workspace. Blocks until Ctrl+C."""
     port = _pick_free_port()
     token = secrets.token_urlsafe(16)
-    app = create_app(agent, token)
+    app = create_app(agent, token, session_storage_root=WEB_SESSIONS_DIR)
 
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)

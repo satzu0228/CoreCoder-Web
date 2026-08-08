@@ -1,82 +1,49 @@
 <template>
-  <div id="app" class="app-container">
-    <div class="workspace-layout">
-      <div class="sidebar">
-        <FileTree :token="store.token" @file-selected="onFileSelected" />
-      </div>
-      <div class="main-content">
-        <ChatPanel />
-      </div>
-    </div>
+  <div id="app" class="app-shell">
+    <SessionSidebar />
+    <ChatPanel />
+    <div v-if="booting" class="boot-screen"><span class="boot-mark">C</span><p>正在打开工作空间…</p></div>
     <ConfirmModal />
     <DiffViewerModal />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue'
-import { useChatStore } from './stores/chatStore'
-import { useAgentStream } from './composables/useAgentStream'
+import { onMounted, ref } from 'vue'
 import ChatPanel from './components/ChatPanel.vue'
-import FileTree from './components/FileTree.vue'
 import ConfirmModal from './components/ConfirmModal.vue'
 import DiffViewerModal from './components/DiffViewerModal.vue'
+import SessionSidebar from './components/SessionSidebar.vue'
+import { useAgentStream } from './composables/useAgentStream'
+import { useChatStore } from './stores/chatStore'
 import './style.css'
 
 const store = useChatStore()
-const { checkPendingConfirm, restoreSessionMessages } = useAgentStream()
-
-const onFileSelected = (file: { path: string; content: string }) => {
-  // 点击文件树的文件时，可以在这里处理预览逻辑
-  // 目前只是选中状态，实际预览可以在后续版本中加
-  console.log('Selected file:', file.path)
-}
+const { initializeSessions } = useAgentStream()
+const booting = ref(true)
 
 onMounted(async () => {
-  // Extract token from URL query params
   const params = new URLSearchParams(location.search)
   const urlToken = params.get('token')
-  const token = urlToken || sessionStorage.getItem('corecoder-token') || ''
-  store.token = token
+  store.token = urlToken || sessionStorage.getItem('corecoder-token') || ''
   if (urlToken) sessionStorage.setItem('corecoder-token', urlToken)
-  // Keep the capability token out of copied URLs, browser history, and referrers.
   if (params.has('token')) {
     params.delete('token')
     const query = params.toString()
     history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`)
   }
-
-  await restoreSessionMessages()
-  // Check for any pending confirmation to restore after page reload.
-  await checkPendingConfirm()
+  try {
+    await initializeSessions()
+  } catch (error) {
+    store.notice = error instanceof Error ? error.message : '无法打开工作空间'
+  } finally {
+    booting.value = false
+  }
 })
 </script>
 
 <style scoped>
-.app-container {
-  width: 100%;
-  height: 100vh;
-  background: #fafafa;
-}
-
-.workspace-layout {
-  display: flex;
-  height: 100%;
-}
-
-.sidebar {
-  width: 250px;
-  background: white;
-  border-right: 1px solid #e0e0e0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.main-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
+.app-shell { width: 100%; height: 100dvh; display: flex; overflow: hidden; background: #f5f7fa; }
+.boot-screen { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; background: #f5f7fa; color: #7d8998; font-size: 12px; }
+.boot-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: #17202a; color: #fff; font: 700 15px Consolas, monospace; }
 </style>

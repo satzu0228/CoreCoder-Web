@@ -423,3 +423,117 @@ def test_session_messages_marks_unanswered_tool_call_running():
     tool_call = resp.json()["messages"][0]["toolCalls"][0]
     assert tool_call["status"] == "running"
     assert tool_call["args"] == {"raw": "not-json"}
+
+
+def test_web_sessions_are_persisted_and_restored_for_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    storage = tmp_path / "sessions"
+    workspace.mkdir()
+    headers = {"X-CoreCoder-Token": TOKEN}
+
+    first_agent = Agent(llm=ScriptedLLM([LLMResponse(content="persisted reply")]), tools=[])
+    first_app = create_app(
+        first_agent,
+        TOKEN,
+        workspace_root=workspace,
+        session_storage_root=storage,
+    )
+    first_client = TestClient(first_app)
+
+    created = first_client.post("/api/sessions", headers=headers)
+    assert created.status_code == 201
+    session_id = created.json()["session"]["id"]
+    response = first_client.post(
+        f"/api/sessions/{session_id}/chat",
+        json={"message": "remember this"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert _parse_sse(response.text)[-1] == {"type": "done", "session_id": session_id}
+
+    restored_app = create_app(
+        Agent(llm=ScriptedLLM([]), tools=[]),
+        TOKEN,
+        workspace_root=workspace,
+        session_storage_root=storage,
+    )
+    restored_client = TestClient(restored_app)
+    listing = restored_client.get("/api/sessions", headers=headers).json()
+    assert [item["id"] for item in listing["sessions"]] == [session_id]
+    assert listing["sessions"][0]["title"] == "remember this"
+
+    detail = restored_client.get(f"/api/sessions/{session_id}", headers=headers).json()
+    assert [message["content"] for message in detail["messages"]] == ["remember this", "persisted reply"]
+
+
+def test_web_sessions_are_isolated_by_workspace(tmp_path):
+    storage = tmp_path / "sessions"
+    workspace_a = tmp_path / "alpha"
+    workspace_b = tmp_path / "beta"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    headers = {"X-CoreCoder-Token": TOKEN}
+
+    app_a = create_app(
+        Agent(llm=ScriptedLLM([]), tools=[]), TOKEN,
+        workspace_root=workspace_a, session_storage_root=storage,
+    )
+    assert TestClient(app_a).post("/api/sessions", headers=headers).status_code == 201
+
+    app_b = create_app(
+        Agent(llm=ScriptedLLM([]), tools=[]), TOKEN,
+        workspace_root=workspace_b, session_storage_root=storage,
+    )
+    listing = TestClient(app_b).get("/api/sessions", headers=headers).json()
+    assert listing["workspace"]["name"] == "beta"
+    assert listing["sessions"] == []
+
+
+def test_web_session_crud_and_single_run_lock(tmp_path):
+    app = create_app(
+        Agent(llm=ScriptedLLM([]), tools=[]), TOKEN,
+        workspace_root=tmp_path, session_storage_root=tmp_path / "sessions",
+    )
+    client = TestClient(app)
+    headers = {"X-CoreCoder-Token": TOKEN}
+    first = client.post("/api/sessions", headers=headers).json()["session"]
+    second = client.post("/api/sessions", headers=headers).json()["session"]
+
+    renamed = client.patch(
+        f"/api/sessions/{first['id']}", json={"title": "Architecture review"}, headers=headers,
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["session"]["title"] == "Architecture review"
+
+    app.state.sessions.begin_run(first["id"])
+    blocked = client.post(
+        f"/api/sessions/{second['id']}/chat", json={"message": "hello"}, headers=headers,
+    )
+    assert blocked.status_code == 409
+    assert client.delete(f"/api/sessions/{first['id']}", headers=headers).status_code == 409
+    app.state.sessions.finish_run(first["id"], "interrupted")
+
+    assert client.delete(f"/api/sessions/{first['id']}", headers=headers).status_code == 204
+    assert client.get(f"/api/sessions/{first['id']}", headers=headers).status_code == 404
+
+
+def test_corrupt_web_session_does_not_hide_valid_sessions(tmp_path):
+    storage = tmp_path / "sessions"
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    headers = {"X-CoreCoder-Token": TOKEN}
+    app = create_app(
+        Agent(llm=ScriptedLLM([]), tools=[]), TOKEN,
+        workspace_root=workspace, session_storage_root=storage,
+    )
+    client = TestClient(app)
+    valid = client.post("/api/sessions", headers=headers).json()["session"]
+    session_dir = app.state.sessions.session_dir
+    (session_dir / ("f" * 32 + ".json")).write_text("{broken", encoding="utf-8")
+
+    restored = create_app(
+        Agent(llm=ScriptedLLM([]), tools=[]), TOKEN,
+        workspace_root=workspace, session_storage_root=storage,
+    )
+    listing = TestClient(restored).get("/api/sessions", headers=headers).json()["sessions"]
+    assert [item["id"] for item in listing] == [valid["id"]]

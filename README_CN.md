@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-✅ **MVP 核心闭环和 P0 体验修复已完成。** FastAPI/SSE Web 层、Vue3 前端、工具时间线、虚拟文件树、按需加载的 Monaco Diff，以及 `edit_file`/`write_file`/危险 `bash` 的人工确认均已落地；刷新页面可以恢复当前进程内的对话、工具状态和挂起确认。完整设计与实际变更见 [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>)、[`docs/开发日志.md`](<docs/开发日志.md>)。
+✅ **v2 对话工作台已经落地。** 左侧改为当前工作空间的对话历史，右侧使用气泡式聊天，并以内联执行轨迹展示工具过程。会话可跨服务重启恢复，SSE 与确认接口按会话路由，Monaco Diff 继续按需弹窗展示。完整设计与实际变更见 [`docs/v2 优化规划.md`](<docs/v2 优化规划.md>)、[`docs/开发日志.md`](<docs/开发日志.md>)。
 
 ## 这是什么
 
@@ -25,8 +25,9 @@ Vue3 + TS + Naive UI + Monaco
       FastAPI Web Server
             │
    ┌────────┴────────┐
-Agent Runtime      Session（内存态状态机）
+Agent Runtime      WebSessionManager
    │
+   ├─ 按 workspace 隔离的对话持久化
    ├─ Web 路径约束: read_file / grep / glob
    └─ 人工确认:
         ├─ edit_file / write_file  先算 diff → confirm_required → 通过才写入
@@ -55,16 +56,18 @@ CoreCoder 的工具执行是同步的：`tool.execute()` 返回字符串，循�
 | Agent runtime | 复用 CoreCoder 主循环；`agent.py` 仅增加工具结束事件，`llm.py` / `context.py` 保持原样 |
 | 后端 | FastAPI + Server-Sent Events |
 | 前端 | Vue 3 + TypeScript + Naive UI + Monaco Editor |
-| 确认状态 | 进程内 `threading.Event`，MVP 阶段限定单用户 / 单 workspace |
+| 对话状态 | 按 workspace 隔离的 JSON session；同一时间只运行一个 Agent 任务 |
+| 确认状态 | 进程内 `threading.Event`，通过 Web session 路由 |
 
 ## 里程碑
 
 | 阶段 | 交付 |
 |---|---|
-| M1 | `corecoder web` 启动，浏览器自动打开，SSE token 流式显示 |
-| M2 | 文件树 + 工具调用时间线；事件总线与 `tool_end` 在单工具和并行两条路径都打通 |
-| M3 | `edit_file` 确认流程 + Monaco diff 展示 |
-| M4 | `bash` 确认流程；共用 `request_confirmation()`；刷新页面后挂起的确认状态能恢复 |
+| MVP | SSE 对话、工具事件、编辑/写入/命令确认、按需加载 Monaco Diff |
+| v2 M1 | 工作空间级对话存储与 session API |
+| v2 M2 | 对话侧栏、气泡消息与链式 Agent 执行轨迹 |
+| v2 M3 | 按 session 路由聊天和确认、刷新恢复、单任务运行锁 |
+| 下一步 | E2E、断线恢复、Markdown 安全渲染和命令安全加固 |
 
 ## 开发与验证
 

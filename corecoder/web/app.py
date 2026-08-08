@@ -11,6 +11,7 @@ from .routes.chat import router as chat_router
 from .routes.confirm import router as confirm_router
 from .routes.session import router as session_router
 from .routes.workspace import router as workspace_router
+from .web_sessions import WebSessionManager
 
 _STATIC_DIR = Path(__file__).parent / "static"
 _DIST_DIR = _STATIC_DIR / "dist"
@@ -20,11 +21,22 @@ _DIST_DIR = _STATIC_DIR / "dist"
 _PUBLIC_PATHS = {"/", "/index.html"}
 
 
-def create_app(agent: Agent, token: str) -> FastAPI:
+def create_app(
+    agent: Agent,
+    token: str,
+    *,
+    workspace_root: Path | None = None,
+    session_storage_root: Path | None = None,
+) -> FastAPI:
     app = FastAPI(title="CoreCoder Web")
     app.state.agent = agent
     app.state.token = token
     app.state.agent_running = False
+    app.state.sessions = WebSessionManager(
+        agent,
+        workspace_root=workspace_root,
+        storage_root=session_storage_root,
+    )
 
     @app.middleware("http")
     async def check_token(request: Request, call_next):

@@ -6,7 +6,7 @@ A human-in-the-loop Web coding agent, built by extending [CoreCoder](https://git
 
 ## Status
 
-✅ **The core MVP loop and P0 experience fixes are complete.** The FastAPI/SSE layer, Vue 3 frontend, virtualized file tree, lazy Monaco diff viewer, and approval flows for `edit_file`, `write_file`, and dangerous `bash` commands are implemented. A refresh restores the current process's conversation, tool states, and pending confirmation. See [`docs/MVP 需求文档.md`](<docs/MVP 需求文档.md>) and [`docs/开发日志.md`](<docs/开发日志.md>).
+✅ **The v2 conversation workspace is implemented.** The left sidebar now holds workspace-scoped conversation history; the main area uses chat bubbles and an inline agent execution trace. Conversations survive server restarts, SSE and confirmation routes are session-aware, and Monaco diff remains an on-demand modal. See [`docs/v2 优化规划.md`](<docs/v2 优化规划.md>) and [`docs/开发日志.md`](<docs/开发日志.md>).
 
 ## What this is
 
@@ -25,8 +25,9 @@ Vue3 + TS + Naive UI + Monaco
       FastAPI Web Server
             │
    ┌────────┴────────┐
-Agent Runtime      Session (in-memory state machine)
+Agent Runtime      WebSessionManager
    │
+   ├─ workspace-scoped conversation persistence
    ├─ Web path boundary: read_file / grep / glob
    └─ approval flows:
         ├─ edit_file / write_file — diff → confirm_required → wait → write
@@ -55,16 +56,18 @@ CoreCoder's tool execution is synchronous: `tool.execute()` returns a string and
 | Agent runtime | CoreCoder loop reused; `agent.py` only adds tool-end events, while `llm.py` and `context.py` remain unchanged |
 | Backend | FastAPI + Server-Sent Events |
 | Frontend | Vue 3 + TypeScript + Naive UI + Monaco Editor |
-| Confirmation state | in-process `threading.Event`, single-user / single-workspace scope for the MVP |
+| Conversation state | workspace-scoped JSON sessions; one active agent run at a time |
+| Confirmation state | in-process `threading.Event`, routed by Web session |
 
 ## Roadmap
 
 | Milestone | Deliverable |
 |---|---|
-| M1 | `corecoder web` boots, browser opens, SSE token streaming works |
-| M2 | File tree + tool-call timeline; event bus and `tool_end` wired for both the single and parallel tool-execution paths |
-| M3 | `edit_file` confirmation flow + Monaco diff viewer |
-| M4 | `bash` confirmation flow; shared `request_confirmation()` helper; pending-confirmation state survives a page refresh |
+| MVP | SSE chat, tool events, edit/write/bash confirmation, lazy Monaco diff |
+| v2 M1 | Workspace-scoped conversation storage and session APIs |
+| v2 M2 | Conversation sidebar, chat bubbles, and chained agent execution trace |
+| v2 M3 | Session-aware chat/confirmation routes, refresh recovery, and single-run lock |
+| Next | E2E coverage, connection recovery, Markdown sanitization, and security hardening |
 
 ## Development
 

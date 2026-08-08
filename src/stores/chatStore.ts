@@ -1,11 +1,25 @@
+import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+
+export type SessionStatus = 'idle' | 'running' | 'waiting_confirmation' | 'interrupted' | 'error'
+
+export interface SessionSummary {
+  id: string
+  title: string
+  preview: string
+  model: string
+  status: SessionStatus
+  created_at: string
+  updated_at: string
+}
 
 export interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   toolCalls?: ToolCall[]
+  isStreaming?: boolean
+  statusText?: string
 }
 
 export interface ToolCall {
@@ -19,6 +33,7 @@ export interface ToolCall {
 export interface ConfirmEvent {
   id: string
   action: 'edit_file' | 'write_file' | 'bash'
+  session_id?: string
   file_path?: string
   command?: string
   reason?: string
@@ -28,80 +43,64 @@ export interface ConfirmEvent {
 }
 
 export const useChatStore = defineStore('chat', () => {
-  const messages = ref<Message[]>([])
-  const token = ref<string>('')
+  const token = ref('')
+  const workspaceName = ref('Workspace')
+  const sessions = ref<SessionSummary[]>([])
+  const activeSessionId = ref<string | null>(null)
+  const runningSessionId = ref<string | null>(null)
+  const messagesBySession = ref<Record<string, Message[]>>({})
   const pendingConfirm = ref<ConfirmEvent | null>(null)
   const pendingConfirmRestored = ref(false)
-  const toolCalls = ref<Map<string, ToolCall>>(new Map())
+  const sidebarOpen = ref(false)
+  const notice = ref('')
   const diffViewerOpen = ref(false)
-  const diffViewerData = ref({
-    fileName: '',
-    oldContent: '',
-    newContent: '',
-  })
+  const diffViewerData = ref({ fileName: '', oldContent: '', newContent: '' })
 
-  const addMessage = (role: 'user' | 'assistant', content: string) => {
-    messages.value.push({
-      id: crypto.randomUUID(),
-      role,
-      content,
-    })
+  const activeSession = computed(() => sessions.value.find(item => item.id === activeSessionId.value) || null)
+  const messages = computed(() => activeSessionId.value ? messagesBySession.value[activeSessionId.value] || [] : [])
+  const isRunning = computed(() => runningSessionId.value !== null)
+
+  function setMessages(sessionId: string, restored: Message[]) {
+    messagesBySession.value[sessionId] = restored
   }
 
-  const updateToolCall = (id: string, update: Partial<ToolCall>) => {
-    const existing = toolCalls.value.get(id)
-    if (existing) {
-      toolCalls.value.set(id, { ...existing, ...update })
-    }
+  function addMessage(sessionId: string, role: Message['role'], content: string): Message {
+    const message = reactive<Message>({ id: crypto.randomUUID(), role, content })
+    const current = messagesBySession.value[sessionId] || []
+    messagesBySession.value[sessionId] = [...current, message]
+    return message
   }
 
-  const createToolCall = (id: string, name: string, args: Record<string, unknown>) => {
-    toolCalls.value.set(id, { id, name, args, status: 'running' })
+  function updateSession(sessionId: string, update: Partial<SessionSummary>) {
+    const session = sessions.value.find(item => item.id === sessionId)
+    if (session) Object.assign(session, update)
   }
 
-  const resetMessages = () => {
-    messages.value = []
-    toolCalls.value.clear()
-    pendingConfirm.value = null
-    pendingConfirmRestored.value = false
-  }
-
-  const restoreMessages = (restored: Message[]) => {
-    messages.value = restored
-    toolCalls.value.clear()
-    for (const message of restored) {
-      for (const toolCall of message.toolCalls || []) {
-        toolCalls.value.set(toolCall.id, toolCall)
-      }
-    }
-  }
-
-  const openDiffViewer = (fileName: string, oldContent: string, newContent: string) => {
+  function openDiffViewer(fileName: string, oldContent: string, newContent: string) {
     diffViewerData.value = { fileName, oldContent, newContent }
     diffViewerOpen.value = true
   }
 
-  const closeDiffViewer = () => {
-    diffViewerOpen.value = false
-  }
-
-  const messageCount = computed(() => messages.value.length)
-
   return {
-    messages,
     token,
+    workspaceName,
+    sessions,
+    activeSessionId,
+    activeSession,
+    runningSessionId,
+    messagesBySession,
+    messages,
     pendingConfirm,
     pendingConfirmRestored,
-    toolCalls,
+    sidebarOpen,
+    notice,
+    isRunning,
     diffViewerOpen,
     diffViewerData,
+    setMessages,
     addMessage,
-    updateToolCall,
-    createToolCall,
-    resetMessages,
-    restoreMessages,
+    updateSession,
     openDiffViewer,
-    closeDiffViewer,
-    messageCount,
+    closeDiffViewer: () => { diffViewerOpen.value = false },
   }
 })
