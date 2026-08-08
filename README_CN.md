@@ -6,30 +6,26 @@
 
 [![CI](https://github.com/satzu0228/CoreCoder-Web/actions/workflows/ci.yml/badge.svg)](https://github.com/satzu0228/CoreCoder-Web/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB) ![Vue](https://img.shields.io/badge/Vue-3-42b883) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> CoreCoder-Web 基于 CoreCoder 的轻量 Python Agent Runtime 开发。模型与工具的循环仍由 Runtime 负责；Web 层只处理会话、事件传输、取消恢复和人工确认。
+## 项目概述
 
-## 为什么做这个项目
+CoreCoder-Web 基于 [CoreCoder](https://github.com/he-yufeng/CoreCoder) Runtime 开发，保留其 LLM 调用、Tool Calling 和多轮执行循环，并扩展了以下能力：
 
-Coding Agent 从终端搬到浏览器后，问题不只是多一个聊天界面。用户需要知道它正在调用什么工具，刷新页面后不能丢掉任务过程，长任务要能停止，文件写入和危险命令也不能悄悄执行。
+1. **Web 交互与运行管理**：通过 FastAPI 和 SSE 传输模型 token、工具调用、执行结果与确认事件，并提供 workspace 会话持久化、事件续传、任务取消和上下文状态展示。
+2. **Human-in-the-loop 工具执行**：在文件写入和高风险命令执行前创建确认点。文件工具先生成 diff，命令工具按 POSIX、PowerShell 和 CMD 规则识别风险；批准后继续执行，拒绝结果返回 Agent 重新决策。
 
-CoreCoder-Web 围绕这些问题补齐了 Web 运行链路：
-
-- 浏览器通过 SSE 接收 token、工具调用、执行结果、状态变化和确认请求。
-- `edit_file`、`write_file` 先生成 diff，用户通过后才写入磁盘。
-- `bash` 普通命令直接执行；命中 POSIX、PowerShell 或 CMD 高风险规则时暂停并询问。
-- 点击停止会中断模型流、唤醒确认等待，并终止 Shell 子进程树。
-- SSE 事件带递增序号，断线后可以重放缺失事件。
+Agent Runtime 负责模型推理和工具调用循环，Web 层负责事件传输与会话状态，确认逻辑位于 Tool 层，因此 CLI 与 Web 可以复用同一套工具接口。
 
 ## 已实现功能
 
-### Coding Agent 工作流
+以下功能均为 CoreCoder-Web 在 CoreCoder Runtime 基础上新增或改造的部分。
+
+### Web 交互
 
 - Markdown 流式回复，使用 DOMPurify 清洗并限制渲染频率
 - 内联执行轨迹，展示工具开始、参数和结果
 - Monaco Diff 弹窗，确认写入前查看改动
 - 工作空间文件选择器，通过 `@path/to/file` 关联文件
-- 上下文用量提示和压缩通知
-- 7 个内置工具：`read_file`、`write_file`、`edit_file`、`glob`、`grep`、`bash`、子 Agent 委派
+- 上下文用量展示和压缩状态通知
 
 ### 对话工作台
 

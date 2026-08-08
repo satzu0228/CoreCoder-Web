@@ -6,30 +6,26 @@ A local-first Web coding agent with streamed execution traces, workspace-scoped 
 
 [![CI](https://github.com/satzu0228/CoreCoder-Web/actions/workflows/ci.yml/badge.svg)](https://github.com/satzu0228/CoreCoder-Web/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB) ![Vue](https://img.shields.io/badge/Vue-3-42b883) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> CoreCoder-Web extends CoreCoder's compact Python agent runtime. The runtime still owns model/tool iteration; the Web layer adds durable conversations, event streaming, cancellation, recovery, and human approval at the tool boundary.
+## Overview
 
-## Why this project exists
+CoreCoder-Web is built on the [CoreCoder](https://github.com/he-yufeng/CoreCoder) runtime. It retains CoreCoder's LLM integration, Tool Calling, and multi-turn execution loop while adding the following capabilities:
 
-A coding agent becomes harder to trust once it leaves the terminal. A Web UI must show what the agent is doing, survive refreshes, stop long-running work, and prevent a model from silently writing files or running destructive commands.
+1. **Web interaction and run management**: FastAPI and SSE deliver model tokens, tool calls, execution results, and confirmation events. Workspace-scoped session persistence, event replay, task cancellation, and context usage tracking manage the run lifecycle.
+2. **Human-in-the-loop tool execution**: File tools generate a diff before writing, while command tools detect risky POSIX, PowerShell, and CMD operations. Approved calls resume execution; rejected results return to the agent for another decision.
 
-CoreCoder-Web implements those controls without moving reasoning into the HTTP layer:
-
-- The browser receives tokens, tool calls, results, status changes, and approval requests over SSE.
-- `edit_file` and `write_file` produce a diff and wait for approval before touching disk.
-- `bash` runs ordinary commands directly but pauses on high-risk POSIX, PowerShell, and CMD patterns.
-- A running task can be cancelled from the UI; active model streams and shell process trees are interrupted.
-- Events carry sequence numbers and are buffered for replay after a dropped connection.
+The agent runtime handles reasoning and the tool-call loop. The Web layer manages event delivery and session state, while approval remains in the tool layer so the CLI and Web application share the same tool contract.
 
 ## Features
 
-### Coding workflow
+The features below are additions or extensions implemented by CoreCoder-Web on top of the CoreCoder runtime.
+
+### Web interaction
 
 - Streaming Markdown replies with DOMPurify sanitization and throttled rendering
 - Inline execution trace for tool start/result events
 - Monaco diff viewer for file changes
 - Workspace file picker with `@path/to/file` references
-- Context usage indicator and compression notices
-- Seven built-in tools: `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `bash`, and sub-agent delegation
+- Context usage display and compression status notices
 
 ### Conversation workspace
 
