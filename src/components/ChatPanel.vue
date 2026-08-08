@@ -29,29 +29,43 @@
           <div class="message-avatar" aria-hidden="true">{{ msg.role === 'user' ? '你' : 'C' }}</div>
           <div class="message-column">
             <div class="message-meta">{{ msg.role === 'user' ? '你' : 'CoreCoder' }}</div>
+            <!-- 执行轨迹：透明、无气泡、可折叠 -->
             <div v-if="msg.role === 'assistant' && msg.toolCalls?.length" class="agent-trace">
-              <div class="trace-heading">
+              <button class="trace-heading" type="button" @click="toggleTrace(msg.id)">
+                <svg viewBox="0 0 16 16" class="trace-chevron" :class="{ collapsed: traceCollapsed[msg.id] }" aria-hidden="true">
+                  <path d="m5 6 3 3 3-3" />
+                </svg>
                 <span>执行轨迹</span>
-                <span>{{ completedCount(msg.toolCalls) }}/{{ msg.toolCalls.length }}</span>
+                <span class="trace-count">{{ completedCount(msg.toolCalls) }}/{{ msg.toolCalls.length }}</span>
+              </button>
+              <div v-show="!traceCollapsed[msg.id]" class="trace-steps">
+                <ToolCallCard
+                  v-for="(tool, index) in msg.toolCalls"
+                  :key="tool.id"
+                  :tool-call="tool"
+                  :style="{ '--trace-index': index }"
+                />
               </div>
-              <ToolCallCard
-                v-for="(tool, index) in msg.toolCalls"
-                :key="tool.id"
-                :tool-call="tool"
-                :style="{ '--trace-index': index }"
-              />
             </div>
+            <!-- 等待模型响应 -->
             <div v-if="msg.role === 'assistant' && !msg.content && !msg.toolCalls?.length && msg.isStreaming" class="waiting-state">
               <span class="waiting-pulse"><i></i><i></i><i></i></span>
               <span>{{ msg.statusText || '等待模型响应' }}</span>
             </div>
+            <!-- 消息气泡 -->
             <div
               v-if="msg.role === 'user' || msg.content"
               class="message-bubble"
               :class="{ streaming: msg.isStreaming }"
             >
-              <div v-if="msg.content" class="message-content">
-                {{ msg.content }}<span v-if="msg.isStreaming" class="typing-caret" aria-hidden="true"></span>
+              <!-- 用户消息：纯文本 -->
+              <div v-if="msg.content && msg.role === 'user'" class="message-content user-text">
+                {{ msg.content }}
+              </div>
+              <!-- 助手消息：渲染 markdown -->
+              <div v-if="msg.content && msg.role === 'assistant'" class="message-content">
+                <MarkdownContent :content="msg.content" />
+                <span v-if="msg.isStreaming" class="typing-caret" aria-hidden="true"></span>
               </div>
             </div>
           </div>
@@ -86,16 +100,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useChatStore, type ToolCall } from '../stores/chatStore'
 import { useAgentStream } from '../composables/useAgentStream'
 import ToolCallCard from './ToolCallCard.vue'
+import MarkdownContent from './MarkdownContent.vue'
 
 const store = useChatStore()
 const { sendMessage } = useAgentStream()
 const inputText = ref('')
 const textarea = ref<HTMLTextAreaElement | null>(null)
 const scrollArea = ref<HTMLElement | null>(null)
+
+// 执行轨迹折叠状态：按消息 id 记录
+const traceCollapsed = reactive<Record<string, boolean>>({})
+function toggleTrace(msgId: string) {
+  traceCollapsed[msgId] = !traceCollapsed[msgId]
+}
 
 const inputDisabled = computed(() => store.isRunning)
 const composerPlaceholder = computed(() => {
@@ -155,9 +176,15 @@ watch(() => store.messages.map(message => `${message.content.length}:${message.t
 .message-meta { margin: 0 5px 6px; color: #8390a1; font-size: 10px; font-weight: 700; }
 .message-bubble { min-width: 56px; padding: 15px 17px; border: 1px solid #dfe5ec; border-radius: 5px 17px 17px 17px; background: #fff; box-shadow: 0 2px 10px rgba(30,43,59,.045); }
 .message-user .message-bubble { border-color: #355fbd; border-radius: 17px 5px 17px 17px; background: #3767d6; color: #fff; box-shadow: 0 5px 16px rgba(55,103,214,.14); }
-.message-content { font-size: 14px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
-.agent-trace { min-width: min(520px, 65vw); margin-bottom: 11px; padding: 13px 15px; border: 1px solid #dfe5ec; border-radius: 5px 14px 14px 14px; background: rgba(255,255,255,.62); }
-.trace-heading { display: flex; justify-content: space-between; margin-bottom: 12px; color: #7d8999; font: 700 9px Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.message-content { font-size: 14px; line-height: 1.72; }
+.message-content.user-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-trace { min-width: min(520px, 65vw); margin-bottom: 11px; }
+.trace-heading { display: flex; align-items: center; gap: 7px; width: 100%; padding: 0; border: 0; background: none; color: #7d8999; font: 700 9px Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
+.trace-heading:hover { color: #526176; }
+.trace-chevron { width: 13px; flex: 0 0 13px; fill: none; stroke: currentColor; stroke-width: 1.5; transition: transform .18s; }
+.trace-chevron.collapsed { transform: rotate(-90deg); }
+.trace-count { margin-left: auto; }
+.trace-steps { margin-top: 9px; }
 .waiting-state { min-height: 24px; display: flex; align-items: center; gap: 9px; padding: 2px 4px; color: #7d8999; font: 500 11px Consolas, monospace; }
 .waiting-pulse { display: flex; gap: 3px; }
 .waiting-pulse i { width: 4px; height: 4px; border-radius: 50%; background: #7690c7; animation: bounce 1.2s infinite ease-in-out; }
